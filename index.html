@@ -3944,28 +3944,54 @@ document.addEventListener('keydown', (e) => {
 });
 
 /* ===== Export ke Excel (struktur sama dengan sgate-database.xlsx) ===== */
+
+// Set lebar kolom otomatis berdasar isi terpanjang tiap kolom (termasuk header).
+function autoFitCols(ws, rows, headers) {
+  const all = [headers, ...rows];
+  ws['!cols'] = headers.map((_, colIdx) => {
+    let max = 8;
+    all.forEach(r => {
+      const v = r[colIdx];
+      const len = v === null || v === undefined ? 0 : String(v).length;
+      if (len > max) max = len;
+    });
+    return { wch: Math.min(max + 2, 45) };
+  });
+  ws['!freeze'] = { xSplit: 0, ySplit: 1 };
+}
+
+// Terapkan format angka Rupiah (#,##0) ke kolom tertentu (0-indexed), mulai baris data ke-2.
+function applyMoneyFormat(ws, rowCount, colIdxs) {
+  colIdxs.forEach(col => {
+    for (let r = 1; r <= rowCount; r++) {
+      const addr = XLSX.utils.encode_cell({ r, c: col });
+      if (ws[addr]) ws[addr].z = '#,##0';
+    }
+  });
+}
+
 function exportToExcel() {
   const wb = XLSX.utils.book_new();
 
+  const emklHeaders = ['ID EMKL', 'Nama Perusahaan', 'Email', 'No. HP/WhatsApp'];
   const emklRows = accounts.map(a => ([a.id, a.company, a.email, a.phone]));
-  const wsEmkl = XLSX.utils.aoa_to_sheet([
-    ['ID EMKL', 'Nama Perusahaan', 'Email', 'No. HP/WhatsApp'],
-    ...emklRows,
-  ]);
+  const wsEmkl = XLSX.utils.aoa_to_sheet([emklHeaders, ...emklRows]);
+  autoFitCols(wsEmkl, emklRows, emklHeaders);
   XLSX.utils.book_append_sheet(wb, wsEmkl, 'EMKL');
 
   const payLabel = { lunas: 'Lunas', belum: 'Belum lunas' };
+  const doHeaders = ['ID DO', 'Nomor DO', 'EMKL', 'ETA', 'Status Pembayaran', 'Biaya Kontainer (Rp)', 'Biaya BBM (Rp)', 'Total Tagihan (Rp)'];
   const doRows = dos.map(d => ([
     d.id, d.doNo, d.emklName, d.eta || '', payLabel[d.paymentStatus] || d.paymentStatus,
     d.containerFee, d.bbmFee, d.amount,
   ]));
-  const wsDo = XLSX.utils.aoa_to_sheet([
-    ['ID DO', 'Nomor DO', 'EMKL', 'ETA', 'Status Pembayaran', 'Biaya Kontainer (Rp)', 'Biaya BBM (Rp)', 'Total Tagihan (Rp)'],
-    ...doRows,
-  ]);
+  const wsDo = XLSX.utils.aoa_to_sheet([doHeaders, ...doRows]);
+  autoFitCols(wsDo, doRows, doHeaders);
+  applyMoneyFormat(wsDo, doRows.length, [5, 6, 7]);
   XLSX.utils.book_append_sheet(wb, wsDo, 'DO');
 
   const gateLabel = { menunggu: 'Menunggu', valid: 'Valid', mismatch: 'Mismatch' };
+  const containerHeaders = ['ID Kontainer', 'Nomor DO', 'No. Kontainer', 'Ukuran', 'Tipe', 'Status Gate', 'Waktu Masuk', 'Kode Gate', 'Biaya Kontainer (Rp)', 'Biaya BBM (Rp)'];
   const containerRows = [];
   dos.forEach(d => d.containers.forEach(c => {
     containerRows.push([
@@ -3973,18 +3999,16 @@ function exportToExcel() {
       c.entryTime || '', c.gateCode, RATE[c.size], BBM_RATE[c.size],
     ]);
   }));
-  const wsKontainer = XLSX.utils.aoa_to_sheet([
-    ['ID Kontainer', 'Nomor DO', 'No. Kontainer', 'Ukuran', 'Tipe', 'Status Gate', 'Waktu Masuk', 'Kode Gate', 'Biaya Kontainer (Rp)', 'Biaya BBM (Rp)'],
-    ...containerRows,
-  ]);
+  const wsKontainer = XLSX.utils.aoa_to_sheet([containerHeaders, ...containerRows]);
+  autoFitCols(wsKontainer, containerRows, containerHeaders);
+  applyMoneyFormat(wsKontainer, containerRows.length, [8, 9]);
   XLSX.utils.book_append_sheet(wb, wsKontainer, 'Kontainer');
 
-  const jenisLabel = { wa: 'Valid', mismatch: 'Mismatch', reminder: 'Reminder', pay: 'Pembayaran' };
+  const jenisLabel = { wa: 'Valid', mismatch: 'Mismatch', pay: 'Pembayaran' };
+  const logHeaders = ['Waktu', 'Jenis', 'Judul', 'Deskripsi', 'Nomor DO Terkait'];
   const logRows = logs.map(l => ([l.time, jenisLabel[l.kind] || l.kind, l.title, l.sub, '']));
-  const wsLog = XLSX.utils.aoa_to_sheet([
-    ['Waktu', 'Jenis', 'Judul', 'Deskripsi', 'Nomor DO Terkait'],
-    ...logRows,
-  ]);
+  const wsLog = XLSX.utils.aoa_to_sheet([logHeaders, ...logRows]);
+  autoFitCols(wsLog, logRows, logHeaders);
   XLSX.utils.book_append_sheet(wb, wsLog, 'Log Notifikasi');
 
   const stamp = new Date().toISOString().slice(0, 10);
