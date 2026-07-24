@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>S-GATE — Prototipe Fase 1</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <style>
   :root {
     --ink: #0d2b26;
@@ -415,12 +415,31 @@
 
   <!-- ============ ADMIN VIEW ============ -->
   <div class="view" id="view-admin">
+
+    <!-- Admin auth screen -->
+    <div id="admin-auth-screen">
+      <div class="auth-wrap">
+        <p class="auth-title">Masuk sebagai Admin Gate</p>
+        <p class="auth-sub">Akses internal untuk petugas gate — bukan untuk EMKL. Hubungi penanggung jawab sistem kalau belum punya akun.</p>
+        <div class="field"><label>Username</label><input type="text" id="admin-username" class="mono-input" placeholder="admin"></div>
+        <div class="field"><label>Kata sandi</label><input type="password" id="admin-password" placeholder="••••••••"></div>
+        <button class="btn btn-primary" style="width:100%; justify-content:center;" onclick="loginAdmin()"><i class="ti ti-shield-lock"></i>Masuk sebagai Admin</button>
+        <div class="flash" id="admin-auth-flash"></div>
+      </div>
+    </div>
+
+    <!-- Admin content (shown after login) -->
+    <div id="admin-content" style="display:none;">
     <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap;">
       <div>
         <h1 class="page-title">Dashboard admin gate</h1>
         <p class="page-sub">Versi dasar — truk masuk, status DO, dan mismatch harian, langsung dari data yang sudah tercatat.</p>
       </div>
-      <button class="btn btn-ghost" onclick="exportToExcel()" style="margin-top:2px;"><i class="ti ti-file-spreadsheet"></i>Export ke Excel</button>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <span style="font-size:12.5px; color:var(--ink-soft);"><i class="ti ti-user-shield"></i> Admin Gate</span>
+        <button class="btn btn-ghost btn-sm" onclick="logoutAdmin()"><i class="ti ti-logout"></i>Keluar</button>
+        <button class="btn btn-ghost" onclick="exportToExcel()" style="margin-top:2px;"><i class="ti ti-file-spreadsheet"></i>Export ke Excel</button>
+      </div>
     </div>
 
     <div class="metrics">
@@ -474,6 +493,7 @@
         <p class="panel-title"><i class="ti ti-bell-ringing"></i>Log notifikasi</p>
         <div id="notif-log"></div>
       </div>
+    </div>
     </div>
   </div>
 
@@ -3212,6 +3232,12 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var n,r,i,a,
 /* ===== State ===== */
 let accounts = [];       // {id, company, email, phone, password}
 let currentUser = null;
+
+// Akun Admin Gate: internal, terpisah dari akun EMKL. Ini demo statis tanpa
+// backend, jadi kredensial ini cuma pemisah akses di sisi tampilan — bukan
+// autentikasi yang aman untuk produksi.
+const ADMIN_ACCOUNT = { username: 'admin', password: 'gate2026' };
+let currentAdmin = null;
 let dos = [];             // {id, doNo, emklId, emklName, eta, paymentStatus, amount, containers:[{id,no,size,type,gateStatus,entryTime}]}
 let logs = [];
 let doSeq = 1;
@@ -3238,8 +3264,38 @@ document.querySelectorAll('.tab').forEach(tab => {
     document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
     tab.classList.add('active');
     document.getElementById('view-' + tab.dataset.view).classList.add('active');
+    if (tab.dataset.view === 'admin') renderAdminAuthState();
   });
 });
+
+/* ===== Admin Gate auth (terpisah dari akun EMKL) ===== */
+function renderAdminAuthState() {
+  const loggedIn = !!currentAdmin;
+  document.getElementById('admin-auth-screen').style.display = loggedIn ? 'none' : 'block';
+  document.getElementById('admin-content').style.display = loggedIn ? 'block' : 'none';
+  if (loggedIn) renderAll();
+}
+
+function loginAdmin() {
+  const username = document.getElementById('admin-username').value.trim();
+  const password = document.getElementById('admin-password').value;
+  if (username === ADMIN_ACCOUNT.username && password === ADMIN_ACCOUNT.password) {
+    currentAdmin = { username };
+    document.getElementById('admin-username').value = '';
+    document.getElementById('admin-password').value = '';
+    renderAdminAuthState();
+  } else {
+    const el = document.getElementById('admin-auth-flash');
+    el.textContent = 'Username atau kata sandi admin salah.';
+    el.className = 'flash show warn';
+    setTimeout(() => { el.classList.remove('show'); }, 3200);
+  }
+}
+
+function logoutAdmin() {
+  currentAdmin = null;
+  renderAdminAuthState();
+}
 
 /* ===== Auth ===== */
 function setAuthMode(mode) {
@@ -3943,41 +3999,61 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closePaymentModal();
 });
 
-/* ===== Export ke Excel (struktur sama dengan sgate-database.xlsx) ===== */
+/* ===== Export ke Excel (struktur sama dengan sgate-database.xlsx, dengan styling) ===== */
 
-// Set lebar kolom otomatis berdasar isi terpanjang tiap kolom (termasuk header).
-function autoFitCols(ws, rows, headers) {
-  const all = [headers, ...rows];
-  ws['!cols'] = headers.map((_, colIdx) => {
-    let max = 8;
-    all.forEach(r => {
-      const v = r[colIdx];
-      const len = v === null || v === undefined ? 0 : String(v).length;
-      if (len > max) max = len;
+const XLSX_HEADER_FILL = 'FF073D30';
+const XLSX_ZEBRA_FILL = 'FFF1F5F3';
+const XLSX_BORDER_COLOR = 'FFD8E2DF';
+const XLSX_THIN_BORDER = {
+  top: { style: 'thin', color: { argb: XLSX_BORDER_COLOR } },
+  bottom: { style: 'thin', color: { argb: XLSX_BORDER_COLOR } },
+  left: { style: 'thin', color: { argb: XLSX_BORDER_COLOR } },
+  right: { style: 'thin', color: { argb: XLSX_BORDER_COLOR } },
+};
+
+// Bikin satu sheet dengan header hijau tua + zebra + border + auto-width,
+// konsisten dengan tampilan sgate-database.xlsx.
+function buildStyledSheet(wb, name, headers, rows, moneyCols = []) {
+  const ws = wb.addWorksheet(name, { views: [{ state: 'frozen', ySplit: 1 }] });
+  ws.columns = headers.map((h, i) => ({
+    header: h,
+    key: 'c' + i,
+    width: Math.min(Math.max(h.length, ...rows.map(r => String(r[i] ?? '').length)) + 3, 42),
+  }));
+  rows.forEach(r => ws.addRow(r));
+
+  const headerRow = ws.getRow(1);
+  headerRow.eachCell(cell => {
+    cell.font = { name: 'Arial', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XLSX_HEADER_FILL } };
+    cell.border = XLSX_THIN_BORDER;
+    cell.alignment = { vertical: 'middle' };
+  });
+
+  for (let r = 2; r <= rows.length + 1; r++) {
+    const row = ws.getRow(r);
+    row.eachCell({ includeEmpty: true }, (cell, colNum) => {
+      cell.font = { name: 'Arial', size: 10 };
+      cell.border = XLSX_THIN_BORDER;
+      if (r % 2 === 0) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: XLSX_ZEBRA_FILL } };
+      if (moneyCols.includes(colNum - 1)) {
+        cell.numFmt = '#,##0;-#,##0;"-"';
+        cell.alignment = { horizontal: 'right' };
+      }
     });
-    return { wch: Math.min(max + 2, 45) };
-  });
-  ws['!freeze'] = { xSplit: 0, ySplit: 1 };
+  }
+  ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: headers.length } };
+  return ws;
 }
 
-// Terapkan format angka Rupiah (#,##0) ke kolom tertentu (0-indexed), mulai baris data ke-2.
-function applyMoneyFormat(ws, rowCount, colIdxs) {
-  colIdxs.forEach(col => {
-    for (let r = 1; r <= rowCount; r++) {
-      const addr = XLSX.utils.encode_cell({ r, c: col });
-      if (ws[addr]) ws[addr].z = '#,##0';
-    }
-  });
-}
-
-function exportToExcel() {
-  const wb = XLSX.utils.book_new();
+async function exportToExcel() {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'S-GATE';
+  wb.created = new Date();
 
   const emklHeaders = ['ID EMKL', 'Nama Perusahaan', 'Email', 'No. HP/WhatsApp'];
   const emklRows = accounts.map(a => ([a.id, a.company, a.email, a.phone]));
-  const wsEmkl = XLSX.utils.aoa_to_sheet([emklHeaders, ...emklRows]);
-  autoFitCols(wsEmkl, emklRows, emklHeaders);
-  XLSX.utils.book_append_sheet(wb, wsEmkl, 'EMKL');
+  buildStyledSheet(wb, 'EMKL', emklHeaders, emklRows);
 
   const payLabel = { lunas: 'Lunas', belum: 'Belum lunas' };
   const doHeaders = ['ID DO', 'Nomor DO', 'EMKL', 'ETA', 'Status Pembayaran', 'Biaya Kontainer (Rp)', 'Biaya BBM (Rp)', 'Total Tagihan (Rp)'];
@@ -3985,10 +4061,7 @@ function exportToExcel() {
     d.id, d.doNo, d.emklName, d.eta || '', payLabel[d.paymentStatus] || d.paymentStatus,
     d.containerFee, d.bbmFee, d.amount,
   ]));
-  const wsDo = XLSX.utils.aoa_to_sheet([doHeaders, ...doRows]);
-  autoFitCols(wsDo, doRows, doHeaders);
-  applyMoneyFormat(wsDo, doRows.length, [5, 6, 7]);
-  XLSX.utils.book_append_sheet(wb, wsDo, 'DO');
+  buildStyledSheet(wb, 'DO', doHeaders, doRows, [5, 6, 7]);
 
   const gateLabel = { menunggu: 'Menunggu', valid: 'Valid', mismatch: 'Mismatch' };
   const containerHeaders = ['ID Kontainer', 'Nomor DO', 'No. Kontainer', 'Ukuran', 'Tipe', 'Status Gate', 'Waktu Masuk', 'Kode Gate', 'Biaya Kontainer (Rp)', 'Biaya BBM (Rp)'];
@@ -3999,20 +4072,24 @@ function exportToExcel() {
       c.entryTime || '', c.gateCode, RATE[c.size], BBM_RATE[c.size],
     ]);
   }));
-  const wsKontainer = XLSX.utils.aoa_to_sheet([containerHeaders, ...containerRows]);
-  autoFitCols(wsKontainer, containerRows, containerHeaders);
-  applyMoneyFormat(wsKontainer, containerRows.length, [8, 9]);
-  XLSX.utils.book_append_sheet(wb, wsKontainer, 'Kontainer');
+  buildStyledSheet(wb, 'Kontainer', containerHeaders, containerRows, [8, 9]);
 
   const jenisLabel = { wa: 'Valid', mismatch: 'Mismatch', pay: 'Pembayaran' };
   const logHeaders = ['Waktu', 'Jenis', 'Judul', 'Deskripsi', 'Nomor DO Terkait'];
   const logRows = logs.map(l => ([l.time, jenisLabel[l.kind] || l.kind, l.title, l.sub, '']));
-  const wsLog = XLSX.utils.aoa_to_sheet([logHeaders, ...logRows]);
-  autoFitCols(wsLog, logRows, logHeaders);
-  XLSX.utils.book_append_sheet(wb, wsLog, 'Log Notifikasi');
+  buildStyledSheet(wb, 'Log Notifikasi', logHeaders, logRows);
 
   const stamp = new Date().toISOString().slice(0, 10);
-  XLSX.writeFile(wb, 'sgate-export-' + stamp + '.xlsx');
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'sgate-import-' + stamp + '.xlsx';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
 function renderAll() {

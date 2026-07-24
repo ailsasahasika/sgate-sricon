@@ -4,9 +4,30 @@ Aplikasi ini adalah prototipe statis (single HTML file) yang bisa langsung dibuk
 tanpa server/backend. File `index.html` sudah berisi semua CSS & JS di dalamnya, jadi cukup
 di-hosting sebagai situs statis.
 
-File `sgate-database.xlsx` disertakan sebagai referensi struktur data (sheet EMKL, DO,
+File `sgate-import.xlsx` disertakan sebagai referensi struktur data (sheet EMKL, DO,
 Kontainer, Log Notifikasi) — bukan file yang di-load otomatis oleh aplikasi, karena aplikasi
 menyimpan datanya sendiri di memori browser saat berjalan.
+
+## Login
+
+Ada dua pintu login yang terpisah:
+
+- **Portal EMKL** — daftar akun sendiri lewat tombol "Daftar akun" di tab Portal EMKL.
+- **Dashboard admin gate** — akun internal untuk petugas gate, kredensial default:
+  - Username: `admin`
+  - Kata sandi: `gate2026`
+
+  Ganti kredensial ini di `index.html` (cari `ADMIN_ACCOUNT`) sebelum dipakai sungguhan.
+  **Catatan penting:** ini situs statis tanpa server, jadi kredensial ini cuma pemisah akses
+  tampilan, bukan autentikasi yang aman — siapa pun yang buka source code bisa melihatnya.
+  Jangan pakai untuk data sensitif di produksi tanpa backend sungguhan.
+
+## Export ke Excel
+
+Tombol "Export ke Excel" di Dashboard admin gate memakai library **ExcelJS** (client-side,
+gratis, MIT license) sehingga file yang dihasilkan sudah berwarna — header hijau tua, teks
+putih bold, garis zebra, format Rupiah, dan baris header dibekukan — konsisten dengan
+`sgate-import.xlsx`.
 
 ---
 
@@ -61,6 +82,6 @@ dan sedikit header keamanan), jadi Netlify akan otomatis mendeteksinya.
 
 ## Isi folder
 - `index.html` — aplikasi S-GATE (dari `sgate-prototype.html`)
-- `sgate-database.xlsx` — referensi struktur data
+- `sgate-import.xlsx` — referensi struktur data
 - `netlify.toml` — konfigurasi deploy Netlify
 - `.gitignore` — file/folder yang diabaikan Git
