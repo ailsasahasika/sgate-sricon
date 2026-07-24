@@ -349,6 +349,13 @@
   .btn-scanqr:hover { background: var(--teal-tint); }
   .qrs-box { position: relative; width: 100%; aspect-ratio: 1 / 1; max-width: 360px; margin: 0 auto;
     background: #0d1f1b; border-radius: 10px; overflow: hidden; }
+  .qrs-close-float {
+    position: absolute; top: 10px; right: 10px; z-index: 5;
+    width: 34px; height: 34px; border-radius: 50%; border: none;
+    background: rgba(0,0,0,0.55); color: #fff; font-size: 18px;
+    display: flex; align-items: center; justify-content: center; cursor: pointer;
+  }
+  .qrs-close-float:hover { background: rgba(0,0,0,0.75); }
   .qrs-box video { width: 100%; height: 100%; object-fit: cover; display: block; }
   .qrs-frame { position: absolute; inset: 12%; border: 2.5px solid rgba(255,255,255,0.85); border-radius: 14px;
     box-shadow: 0 0 0 999px rgba(0,0,0,0.28); pointer-events: none; }
@@ -508,7 +515,7 @@
     </div>
 
     <div class="subtabs">
-      <button class="subtab active" id="subtab-out" onclick="switchAdminSub('out')"><i class="ti ti-barrier-block"></i> Gate Keluar (Depot OUT)</button>
+      <button class="subtab active" id="subtab-out" onclick="switchAdminSub('out')"><i class="ti ti-barrier-block"></i> Gate IN (Depot OUT)</button>
       <button class="subtab" id="subtab-in" onclick="switchAdminSub('in')"><i class="ti ti-anchor"></i> Depot IN (Kontainer dari Kapal)</button>
     </div>
 
@@ -878,6 +885,7 @@
     </div>
     <div class="modal-body">
       <div class="qrs-box" id="qrs-box">
+        <button class="qrs-close-float" onclick="closeQrScanner()" aria-label="Tutup kamera"><i class="ti ti-x"></i></button>
         <video id="qrs-video" playsinline muted></video>
         <div class="qrs-frame"></div>
         <div class="qrs-line" id="qrs-line"></div>
@@ -3777,6 +3785,62 @@ function regLookup(no) {
   return key ? (containerRegistry[key] || null) : null;
 }
 
+/* ================= PENYIMPANAN PERSISTEN (localStorage) =================
+   Prototipe ini awalnya cuma nyimpen data di memori browser (hilang tiap
+   refresh/logout). Sekarang seluruh data + sesi login disimpan di localStorage
+   milik browser/device ini, jadi tetap ada walau tab ditutup atau di-refresh.
+   Catatan: ini per-device/per-browser, bukan server sungguhan — kalau buka dari
+   device lain datanya tidak ikut, dan kalau localStorage browser dibersihkan,
+   data ini juga ikut hilang. Untuk multi-device/multi-user beneran tetap perlu
+   backend + database. */
+const STORAGE_KEY = 'sgate_data_v1';
+
+function serializeState() {
+  const activeTabEl = document.querySelector('.tab.active');
+  return {
+    accounts, dos, logs, doSeq, containerSeq, rowSeq,
+    depotInEntries, depotInSeq, containerRegistry,
+    currentUserId: currentUser ? currentUser.id : null,
+    adminLoggedIn: !!currentAdmin,
+    activeTab: activeTabEl ? activeTabEl.dataset.view : 'emkl',
+  };
+}
+
+function saveState() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(serializeState()));
+  } catch (e) {
+    // Penyimpanan browser penuh/nonaktif — biarkan, aplikasi tetap jalan di memori untuk sesi ini.
+  }
+}
+
+function loadState() {
+  let s;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    s = JSON.parse(raw);
+  } catch (e) { return null; }
+  if (!s) return null;
+
+  accounts = s.accounts || [];
+  dos = s.dos || [];
+  logs = s.logs || [];
+  doSeq = s.doSeq || 1;
+  containerSeq = s.containerSeq || 1;
+  rowSeq = s.rowSeq || 1;
+  depotInEntries.length = 0;
+  (s.depotInEntries || []).forEach(e => depotInEntries.push(e));
+  depotInSeq = s.depotInSeq || 1;
+  Object.keys(containerRegistry).forEach(k => delete containerRegistry[k]);
+  Object.assign(containerRegistry, s.containerRegistry || {});
+
+  if (s.currentUserId) currentUser = accounts.find(a => a.id === s.currentUserId) || null;
+  if (s.adminLoggedIn) currentAdmin = { username: ADMIN_ACCOUNT.username };
+
+  return s;
+}
+
 /* ===== Clock ===== */
 function pad(n) { return n.toString().padStart(2, '0'); }
 function nowStr() { const d = new Date(); return pad(d.getHours()) + ':' + pad(d.getMinutes()); }
@@ -3798,6 +3862,7 @@ document.querySelectorAll('.tab').forEach(tab => {
     tab.classList.add('active');
     document.getElementById('view-' + tab.dataset.view).classList.add('active');
     if (tab.dataset.view === 'admin') renderAdminAuthState();
+    saveState();
   });
 });
 
@@ -3828,6 +3893,7 @@ function loginAdmin() {
 function logoutAdmin() {
   currentAdmin = null;
   renderAdminAuthState();
+  saveState();
 }
 
 /* ===== Auth ===== */
@@ -3884,6 +3950,7 @@ function logout() {
   document.getElementById('who-box').style.display = 'none';
   document.getElementById('login-email').value = '';
   document.getElementById('login-password').value = '';
+  saveState();
 }
 
 function enterPortal() {
@@ -5064,7 +5131,32 @@ function renderAll() {
   renderScanOptions();
   renderAdminTable();
   renderStats();
+  saveState();
 }
+const restoredState = loadState();
+
+if (restoredState && restoredState.activeTab) {
+  const targetView = restoredState.activeTab;
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.view === targetView));
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === 'view-' + targetView));
+}
+
+if (currentUser) {
+  // Sesi EMKL masih tersimpan di device ini — langsung tampilkan portalnya tanpa perlu login ulang.
+  document.getElementById('auth-screen').style.display = 'none';
+  document.getElementById('emkl-content').style.display = 'block';
+  document.getElementById('who-box').style.display = 'flex';
+  document.getElementById('who-avatar').textContent = currentUser.company.slice(0,2).toUpperCase();
+  document.getElementById('who-name').textContent = currentUser.company;
+  document.getElementById('company-label').textContent = currentUser.company;
+  resetContainerRows();
+}
+
+if (currentAdmin) {
+  // Sesi Admin Gate juga tersimpan — langsung ke dashboard tanpa login ulang.
+  renderAdminAuthState();
+}
+
 renderAll();
 renderLog();
 </script>
