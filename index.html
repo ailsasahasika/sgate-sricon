@@ -3391,7 +3391,6 @@ function submitDO() {
   resetContainerRows();
 
   flash('emkl-flash', 'DO ' + doNo + ' terdaftar dengan ' + containers.length + ' kontainer. Selesaikan pembayaran agar bisa diproses di gate.', 'ok');
-  pushLog('reminder', 'Reminder terjadwal dikirim', 'Pengingat H-2 jam ke ' + currentUser.company + ' untuk DO ' + doNo);
   renderAll();
 }
 
