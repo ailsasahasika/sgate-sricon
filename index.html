@@ -520,8 +520,6 @@
       <button class="subtab active" id="subtab-in" onclick="switchAdminSub('in')"><i class="ti ti-anchor"></i> Masuk (dari Kapal)</button>
       <button class="subtab" id="subtab-out" onclick="switchAdminSub('out')"><i class="ti ti-barrier-block"></i> Keluar (ke Customer)</button>
     </div>
-    <p style="font-size:12px; color:var(--ink-soft); margin:6px 0 16px;">Satu form, satu data, satu riwayat — tinggal pilih arah pergerakan kontainernya. Kontainer yang sama tetap saling nyambung lewat nomor kontainernya, baik pas masuk maupun keluar depot.</p>
-
     <div id="admin-sub-out" style="display:none;">
     <div class="metrics">
       <div class="metric teal">
@@ -596,8 +594,6 @@
         <p class="panel-title" style="margin-bottom:0;"><i class="ti ti-anchor"></i>Depot IN — entry kontainer masuk dari kapal</p>
         <span style="font-size:12px; color:var(--ink-soft);">Transact ID: <span class="mono" id="din-transact-preview">(Auto)</span></span>
       </div>
-      <p style="font-size: 12.5px; color: var(--ink-soft); margin: 6px 0 0;">Satu entry = satu kontainer, meniru form Depot IN di SISINFODEPOT. Grade kontainer terdeteksi otomatis dari nomor seri (aturan SPNU di bawah).</p>
-
       <p class="section-label">Documents Details</p>
       <div class="grid-form">
         <div class="field">
@@ -3999,8 +3995,8 @@ function onDoContainerNoInput(rid) {
     hint.className = 'c-hint found';
     hint.innerHTML = `<i class="ti ti-anchor"></i> Vessel ${reg.vesselName} voy ${reg.voy || '—'} · BL ${reg.blNo || '—'} · ${reg.principal || ''}${reg.grade ? ' · Grade ' + reg.grade : ''} (dari Depot IN)`;
   } else {
-    hint.className = 'c-hint missing';
-    hint.innerHTML = '<i class="ti ti-alert-triangle"></i> Belum ada entry Depot IN untuk nomor ini — pastikan kontainer sudah tercatat masuk depot sebelum diajukan keluar.';
+    hint.className = 'c-hint';
+    hint.innerHTML = '';
   }
 }
 
