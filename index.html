@@ -297,6 +297,13 @@
   .va-box .va-number { font-family: var(--mono); font-size: 15px; font-weight: 600; letter-spacing: 0.5px; }
   .va-copy { background: transparent; border: 1px solid var(--hair-strong); border-radius: 6px; padding: 6px 8px; cursor: pointer; color: var(--ink-soft); font-size: 12px; }
   .va-copy:hover { background: var(--panel); }
+  .qris-box {
+    background: var(--paper); border: 1px solid var(--hair-strong); border-radius: 8px;
+    padding: 16px 14px; margin: 4px 0 14px; display: none; flex-direction: column; align-items: center; gap: 8px;
+  }
+  .qris-box img { width: 168px; height: 168px; image-rendering: pixelated; }
+  .qris-box .qris-caption { font-size: 11.5px; color: var(--ink-soft); text-align: center; max-width: 280px; }
+  .qris-box .qris-ref { font-family: var(--mono); font-size: 12px; color: var(--ink); }
   .pay-expiry { font-size: 11.5px; color: var(--amber); display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
   .modal-actions { display: flex; gap: 10px; margin-top: 18px; }
   .modal-actions .btn { flex: 1; justify-content: center; }
@@ -534,12 +541,17 @@
       </div>
 
       <div class="pay-expiry"><i class="ti ti-clock-hour-4"></i> Selesaikan sebelum <span id="pay-expiry-time"></span> agar truk tidak tertahan di gate.</div>
-      <div class="va-box">
+      <div class="va-box" id="va-box">
         <div>
           <div class="va-label" id="va-label-text">No. Virtual Account BCA</div>
           <div class="va-number" id="va-number">—</div>
         </div>
         <button class="va-copy" onclick="copyVA()"><i class="ti ti-copy"></i> Salin</button>
+      </div>
+      <div class="qris-box" id="qris-box">
+        <img id="qris-img" alt="Kode QRIS">
+        <div class="qris-caption">Pindai kode QRIS di atas dari aplikasi e-wallet atau m-banking apa pun.</div>
+        <div class="qris-ref">Ref: <span id="qris-ref-text"></span></div>
       </div>
 
       <div class="modal-actions">
@@ -3516,9 +3528,28 @@ function selectMethod(method) {
 
 function updateVADisplay() {
   if (!payingDoId) return;
-  const meta = METHOD_META[payingMethod];
-  document.getElementById('va-label-text').textContent = meta.label;
-  document.getElementById('va-number').textContent = vaNumberFor(payingDoId, payingMethod);
+  if (payingMethod === 'qris') {
+    document.getElementById('va-box').style.display = 'none';
+    document.getElementById('qris-box').style.display = 'flex';
+    document.getElementById('qris-img').src = qrisDataURL(payingDoId);
+    document.getElementById('qris-ref-text').textContent = vaNumberFor(payingDoId, 'qris');
+  } else {
+    const meta = METHOD_META[payingMethod];
+    document.getElementById('qris-box').style.display = 'none';
+    document.getElementById('va-box').style.display = 'flex';
+    document.getElementById('va-label-text').textContent = meta.label;
+    document.getElementById('va-number').textContent = vaNumberFor(payingDoId, payingMethod);
+  }
+}
+
+function qrisDataURL(doId) {
+  const d = dos.find(x => x.id === doId);
+  if (!d) return '';
+  const payload = 'S-GATE|QRIS|DO:' + d.doNo + '|AMOUNT:' + d.amount + '|REF:' + vaNumberFor(doId, 'qris');
+  const qr = qrcode(0, 'M');
+  qr.addData(payload);
+  qr.make();
+  return qr.createDataURL(6, 8);
 }
 
 function copyVA() {
@@ -3536,7 +3567,7 @@ function confirmPayment() {
   const methodLabel = { va_bca: 'Virtual Account BCA', va_mandiri: 'Virtual Account Mandiri', qris: 'QRIS' }[payingMethod];
   d.paymentStatus = 'lunas';
   d.paymentMethod = methodLabel;
-  pushLog('pay', 'Pembayaran diterima', 'DO ' + d.doNo + ' — Rp ' + d.amount.toLocaleString('id-ID') + ' dari ' + d.emklName + ' via ' + methodLabel);
+  pushLog('pay', 'Pembayaran diterima', 'DO ' + d.doNo + ' — Rp ' + d.amount.toLocaleString('id-ID') + ' dari ' + d.emklName + ' via ' + methodLabel, d.doNo);
   closePaymentModal();
   flash('emkl-flash', 'Pembayaran DO ' + d.doNo + ' via ' + methodLabel + ' berhasil. Truk sekarang bisa diproses di gate.', 'ok');
   renderAll();
@@ -3614,7 +3645,16 @@ function receiptDocHTML(d, kind) {
   .foot { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 30px; }
   .foot .note { font-size: 11px; color: #3d5c56; max-width: 280px; }
   .sign { text-align: center; font-size: 12.5px; }
-  .sign .line { margin-top: 54px; border-top: 1px solid #0d2b26; padding-top: 6px; }
+  .sign .line { margin-top: 10px; border-top: 1px solid #0d2b26; padding-top: 6px; }
+  .stamp {
+    width: 84px; height: 84px; margin: 0 auto; border-radius: 50%;
+    border: 2px solid #0a5c46; display: flex; align-items: center; justify-content: center;
+    color: #0a5c46; font-weight: 700; text-align: center; line-height: 1.25;
+    transform: rotate(-9deg); opacity: 0.82; font-family: 'IBM Plex Mono', Consolas, monospace;
+  }
+  .stamp .s1 { font-size: 8.5px; letter-spacing: 1px; }
+  .stamp .s2 { font-size: 12px; letter-spacing: 0.5px; }
+  .stamp .s3 { font-size: 7px; letter-spacing: 1.5px; }
   .print-bar { max-width: 640px; margin: 0 auto 14px; text-align: right; }
   .print-bar button {
     font-size: 13px; padding: 9px 16px; border-radius: 6px; border: none; cursor: pointer;
@@ -3640,7 +3680,10 @@ function receiptDocHTML(d, kind) {
     <p class="terbilang">Terbilang: ${terbilang(total)} rupiah.</p>
     <div class="foot">
       <p class="note">Kwitansi ini diterbitkan otomatis oleh sistem S-GATE dan sah sebagai bukti pembayaran ${isKontainer ? 'biaya kontainer' : 'biaya BBM'} untuk DO tersebut di atas.</p>
-      <div class="sign">Depo Sricon<div class="line">Admin Kasir</div></div>
+      <div class="sign">Depo Sricon
+        <div class="stamp"><div><div class="s1">DEPO</div><div class="s2">SRICON</div><div class="s3">• SAH •</div></div></div>
+        <div class="line">Admin Kasir</div>
+      </div>
     </div>
   </div>
 </body></html>`;
@@ -3777,9 +3820,27 @@ function buildReceiptPDF(d, kind) {
   doc.setFontSize(9);
   doc.setTextColor(...ink);
   doc.text('Depo Sricon', rightX, y, { align: 'right' });
+
+  // Cap "Sricon" — stempel bulat di atas garis tanda tangan.
+  const stampX = rightX - 19;
+  const stampY = y + 7;
+  doc.setDrawColor(10, 92, 70);
+  doc.setLineWidth(0.5);
+  doc.circle(stampX, stampY, 8.5, 'S');
+  doc.setTextColor(10, 92, 70);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(6.5);
+  doc.text('DEPO', stampX, stampY - 2.2, { align: 'center', angle: -8 });
+  doc.setFontSize(8.5);
+  doc.text('SRICON', stampX, stampY + 1.3, { align: 'center', angle: -8 });
+  doc.setFontSize(5);
+  doc.text('• SAH •', stampX, stampY + 4.6, { align: 'center', angle: -8 });
+
   doc.setDrawColor(...ink);
   doc.line(rightX - 38, y + 14, rightX, y + 14);
   doc.setFontSize(8);
+  doc.setTextColor(...ink);
+  doc.setFont('helvetica', 'normal');
   doc.text('Admin Kasir', rightX, y + 18, { align: 'right' });
 
   return doc;
@@ -3939,11 +4000,11 @@ function scanTruck() {
 
   if (exactMatch) {
     c.gateStatus = 'valid';
-    pushLog('wa', 'Kontainer valid di gate in', c.no + ' (' + c.size + ' ' + c.type + ') cocok dengan DO ' + d.doNo);
+    pushLog('wa', 'Kontainer valid di gate in', c.no + ' (' + c.size + ' ' + c.type + ') cocok dengan DO ' + d.doNo, d.doNo);
   } else {
     c.gateStatus = 'mismatch';
-    pushLog('mismatch', 'Mismatch terdeteksi', 'Fisik "' + actual + '" tidak cocok dengan DO ' + d.doNo + ' (' + c.no + ')');
-    pushLog('mismatch', 'Notifikasi terkirim ke EMKL', d.emklName + ' diberi tahu untuk verifikasi ulang');
+    pushLog('mismatch', 'Mismatch terdeteksi', 'Fisik "' + actual + '" tidak cocok dengan DO ' + d.doNo + ' (' + c.no + ')', d.doNo);
+    pushLog('mismatch', 'Notifikasi terkirim ke EMKL', d.emklName + ' diberi tahu untuk verifikasi ulang', d.doNo);
   }
   c.entryTime = nowStr();
   document.getElementById('scan-actual').value = '';
@@ -3981,8 +4042,8 @@ function renderStats() {
 }
 
 /* ===== Notification log ===== */
-function pushLog(kind, title, sub) {
-  logs.unshift({ kind, title, sub, time: nowStr() });
+function pushLog(kind, title, sub, doNo) {
+  logs.unshift({ kind, title, sub, time: nowStr(), doNo: doNo || '' });
   renderLog();
 }
 function renderLog() {
@@ -4025,12 +4086,14 @@ const XLSX_THIN_BORDER = {
 
 // Bikin satu sheet dengan header hijau tua + zebra + border + auto-width,
 // konsisten dengan tampilan sgate-database.xlsx.
-function buildStyledSheet(wb, name, headers, rows, moneyCols = []) {
+function buildStyledSheet(wb, name, headers, rows, moneyCols = [], wrapCols = []) {
   const ws = wb.addWorksheet(name, { views: [{ state: 'frozen', ySplit: 1 }] });
   ws.columns = headers.map((h, i) => ({
     header: h,
     key: 'c' + i,
-    width: Math.min(Math.max(h.length, ...rows.map(r => String(r[i] ?? '').length)) + 3, 42),
+    width: wrapCols.includes(i)
+      ? 50
+      : Math.min(Math.max(h.length, ...rows.map(r => String(r[i] ?? '').length)) + 3, 42),
   }));
   rows.forEach(r => ws.addRow(r));
 
@@ -4051,6 +4114,9 @@ function buildStyledSheet(wb, name, headers, rows, moneyCols = []) {
       if (moneyCols.includes(colNum - 1)) {
         cell.numFmt = '#,##0;-#,##0;"-"';
         cell.alignment = { horizontal: 'right' };
+      }
+      if (wrapCols.includes(colNum - 1)) {
+        cell.alignment = { wrapText: true, vertical: 'top' };
       }
     });
   }
@@ -4088,8 +4154,8 @@ async function exportToExcel() {
 
   const jenisLabel = { wa: 'Valid', mismatch: 'Mismatch', pay: 'Pembayaran' };
   const logHeaders = ['Waktu', 'Jenis', 'Judul', 'Deskripsi', 'Nomor DO Terkait'];
-  const logRows = logs.map(l => ([l.time, jenisLabel[l.kind] || l.kind, l.title, l.sub, '']));
-  buildStyledSheet(wb, 'Log Notifikasi', logHeaders, logRows);
+  const logRows = logs.map(l => ([l.time, jenisLabel[l.kind] || l.kind, l.title, l.sub, l.doNo || '']));
+  buildStyledSheet(wb, 'Log Notifikasi', logHeaders, logRows, [], [2, 3]);
 
   const stamp = new Date().toISOString().slice(0, 10);
   const buffer = await wb.xlsx.writeBuffer();
