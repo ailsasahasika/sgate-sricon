@@ -240,8 +240,12 @@
   .auth-sub { font-size: 12.5px; color: var(--ink-soft); margin: 0 0 20px; }
 
   /* Container rows in form */
-  .container-rows { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
-  .container-row { display: grid; grid-template-columns: 2fr 1fr auto; gap: 8px; align-items: center; }
+  .container-rows { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+  .container-row { border: 1px solid var(--hair); border-radius: 8px; padding: 8px; }
+  .container-row-main { display: grid; grid-template-columns: 1.6fr 1.4fr 0.9fr auto; gap: 8px; align-items: center; }
+  .c-hint { font-size: 11.5px; color: var(--ink-soft); margin: 6px 2px 0; min-height: 1px; }
+  .c-hint.found { color: #166534; }
+  .c-hint.missing { color: #92400e; }
 
   /* DO card in EMKL portal */
   .do-card { border: 1px solid var(--hair); border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
@@ -362,7 +366,7 @@
 
   @media (max-width: 720px) {
     .grid-form, .metrics, .two-col { grid-template-columns: 1fr; }
-    .container-row { grid-template-columns: 1fr; }
+    .container-row-main { grid-template-columns: 1fr; }
   }
 </style>
 </head>
@@ -551,7 +555,7 @@
 
         <div style="margin-top: 20px;">
           <table>
-            <thead><tr><th>Waktu</th><th>No. DO</th><th>Kontainer</th><th>EMKL</th><th>Status</th></tr></thead>
+            <thead><tr><th>Waktu</th><th>No. DO</th><th>Kontainer</th><th>Customer</th><th>Vessel / Voy</th><th>Status</th></tr></thead>
             <tbody id="admin-table-body"></tbody>
           </table>
         </div>
@@ -3752,6 +3756,27 @@ let doSeq = 1;
 let containerSeq = 1;
 let rowSeq = 1;
 
+/* ================= REGISTRY KONTAINER TERINTEGRASI =================
+   Satu sumber data bersama antara Depot IN dan Depot OUT (DO/EMKL), pakai
+   nomor kontainer (dinormalisasi) sebagai kunci. Depot IN mengisi data
+   vessel/voy/BL/principal; EMKL (saat bikin DO di Depot OUT) mengisi nama
+   customer per kontainer. Siapa pun yang isi duluan, sisi lain tinggal
+   membaca / auto-fill dari sini saat nomor kontainer yang sama dipakai lagi. */
+const containerRegistry = {};
+
+function regUpsert(no, patch) {
+  const key = normalizeContainerNo(no);
+  if (!key) return;
+  const clean = {};
+  Object.keys(patch).forEach(k => { if (patch[k] !== undefined && patch[k] !== '') clean[k] = patch[k]; });
+  containerRegistry[key] = Object.assign({}, containerRegistry[key], clean, { containerNo: no });
+}
+
+function regLookup(no) {
+  const key = normalizeContainerNo(no);
+  return key ? (containerRegistry[key] || null) : null;
+}
+
 /* ===== Clock ===== */
 function pad(n) { return n.toString().padStart(2, '0'); }
 function nowStr() { const d = new Date(); return pad(d.getHours()) + ':' + pad(d.getMinutes()); }
@@ -3885,11 +3910,34 @@ function addContainerRow() {
   row.className = 'container-row';
   row.id = rid;
   row.innerHTML = `
-    <input type="text" class="mono-input c-no" placeholder="Nomor kontainer, mis. TCLU 771205 4">
-    <select class="c-size"><option>20'</option><option>40'</option></select>
-    <button type="button" class="btn-icon" onclick="removeContainerRow('${rid}')" aria-label="Hapus baris"><i class="ti ti-trash"></i></button>
+    <div class="container-row-main">
+      <input type="text" class="mono-input c-no" placeholder="Nomor kontainer, mis. TCLU 771205 4" oninput="onDoContainerNoInput('${rid}')">
+      <input type="text" class="c-cust" placeholder="Nama customer untuk kontainer ini">
+      <select class="c-size"><option>20'</option><option>40'</option></select>
+      <button type="button" class="btn-icon" onclick="removeContainerRow('${rid}')" aria-label="Hapus baris"><i class="ti ti-trash"></i></button>
+    </div>
+    <div class="c-hint" id="${rid}-hint"></div>
   `;
   wrap.appendChild(row);
+}
+
+/* Saat nomor kontainer diketik di form DO (Depot OUT), cek registry gabungan:
+   kalau kontainer ini sudah pernah tercatat lewat Depot IN, tampilkan vessel/voy/BL-nya
+   supaya EMKL tidak perlu tanya-tanya lagi ke pihak depot. */
+function onDoContainerNoInput(rid) {
+  const row = document.getElementById(rid);
+  if (!row) return;
+  const no = row.querySelector('.c-no').value;
+  const hint = document.getElementById(rid + '-hint');
+  const reg = regLookup(no);
+  if (!no.trim()) { hint.textContent = ''; hint.className = 'c-hint'; return; }
+  if (reg && reg.vesselName) {
+    hint.className = 'c-hint found';
+    hint.innerHTML = `<i class="ti ti-anchor"></i> Vessel ${reg.vesselName} voy ${reg.voy || '—'} · BL ${reg.blNo || '—'} · ${reg.principal || ''}${reg.grade ? ' · Grade ' + reg.grade : ''} (dari Depot IN)`;
+  } else {
+    hint.className = 'c-hint missing';
+    hint.innerHTML = '<i class="ti ti-alert-triangle"></i> Belum ada entry Depot IN untuk nomor ini — pastikan kontainer sudah tercatat masuk depot sebelum diajukan keluar.';
+  }
 }
 
 function removeContainerRow(rid) {
@@ -3904,8 +3952,8 @@ function fillSample() {
   document.getElementById('eta').value = 'Hari ini, ' + (13 + n % 4) + ':00';
   document.getElementById('container-rows').innerHTML = '';
   const samples = [
-    ['TCLU 771205 4', "20'"],
-    ['MSKU 220118 9', "40'"],
+    ['TCLU 771205 4', "20'", 'PT Nusantara Cargo'],
+    ['MSKU 220118 9', "40'", 'CV Sinar Abadi'],
   ];
   samples.forEach(s => {
     addContainerRow();
@@ -3913,6 +3961,8 @@ function fillSample() {
     const last = rows[rows.length - 1];
     last.querySelector('.c-no').value = s[0];
     last.querySelector('.c-size').value = s[1];
+    last.querySelector('.c-cust').value = s[2];
+    onDoContainerNoInput(last.id);
   });
 }
 
@@ -3932,14 +3982,25 @@ function submitDO() {
   const containers = [];
   rows.forEach(r => {
     const no = r.querySelector('.c-no').value.trim();
+    const custName = r.querySelector('.c-cust').value.trim();
     const size = r.querySelector('.c-size').value;
-    if (no) containers.push({ id: containerSeq++, no, size, type: DEFAULT_TYPE, gateStatus: 'menunggu', entryTime: null, gateCode: makeGateCode() });
+    if (no) containers.push({ id: containerSeq++, no, size, type: DEFAULT_TYPE, gateStatus: 'menunggu', entryTime: null, gateCode: makeGateCode(), customerName: custName });
   });
 
   if (!doNo || containers.length === 0) {
     flash('emkl-flash', 'Isi nomor DO dan minimal satu nomor kontainer.', 'warn');
     return;
   }
+
+  // Sinkronkan nama customer per kontainer (dari EMKL) ke registry gabungan, supaya
+  // sisi Depot IN bisa lihat/auto-fill kalau kontainer yang sama pernah/nanti dientry di sana.
+  containers.forEach(c => {
+    regUpsert(c.no, {
+      emklCustomerName: c.customerName || undefined,
+      emklName: currentUser.company,
+      savedAsGateOut: true,
+    });
+  });
 
   const containerFee = containers.reduce((sum, c) => sum + RATE[c.size], 0);
   const bbmFee = containers.reduce((sum, c) => sum + BBM_RATE[c.size], 0);
@@ -4399,9 +4460,13 @@ function renderDoCards() {
         </div>
       </div>
       <table>
-        <thead><tr><th>Kontainer</th><th>Ukuran / tipe</th><th>Status gate</th></tr></thead>
+        <thead><tr><th>Kontainer</th><th>Customer</th><th>Ukuran / tipe</th><th>Vessel / Voy</th><th>Status gate</th></tr></thead>
         <tbody>
-          ${d.containers.map(c => `<tr><td class="mono">${c.no}</td><td class="muted">${c.size} · ${c.type}</td><td>${statusBadge(c.gateStatus)}</td></tr>`).join('')}
+          ${d.containers.map(c => {
+            const reg = regLookup(c.no);
+            const vesselTxt = reg && reg.vesselName ? reg.vesselName + (reg.voy ? ' / ' + reg.voy : '') : '<span style="color:#92400e;">belum ada Depot IN</span>';
+            return `<tr><td class="mono">${c.no}</td><td class="muted">${c.customerName || '—'}</td><td class="muted">${c.size} · ${c.type}</td><td class="muted">${vesselTxt}</td><td>${statusBadge(c.gateStatus)}</td></tr>`;
+          }).join('')}
         </tbody>
       </table>
       ${d.paymentStatus === 'lunas' ? `
@@ -4446,7 +4511,12 @@ function onScanDoChange() {
 
   const waiting = d.containers.filter(c => c.gateStatus === 'menunggu');
   pendingInfo.innerHTML = waiting.length
-    ? 'Menunggu di DO ini: ' + waiting.map(c => `<span class="mono">${c.no}</span> (${c.size} ${c.type})`).join(', ')
+    ? 'Menunggu di DO ini:<br>' + waiting.map(c => {
+        const reg = regLookup(c.no);
+        const vesselInfo = reg && reg.vesselName ? ` — vessel <b>${reg.vesselName}</b> voy ${reg.voy || '—'} · BL ${reg.blNo || '—'}` : ' — <span style="color:#92400e;">belum ada data Depot IN</span>';
+        const custInfo = c.customerName ? ` · cust: ${c.customerName}` : '';
+        return `<span class="mono">${c.no}</span> (${c.size} ${c.type})${vesselInfo}${custInfo}`;
+      }).join('<br>')
     : 'Semua kontainer di DO ini sudah diproses.';
 
   if (d.paymentStatus === 'belum') {
@@ -4515,15 +4585,20 @@ function renderAdminTable() {
     body.innerHTML = '<tr class="empty-row"><td colspan="5">Belum ada truk yang dicocokkan di gate.</td></tr>';
     return;
   }
-  body.innerHTML = rows.reverse().map(({d,c}) => `
+  body.innerHTML = rows.reverse().map(({d,c}) => {
+    const reg = regLookup(c.no);
+    const vesselTxt = reg && reg.vesselName ? reg.vesselName + (reg.voy ? ' / ' + reg.voy : '') : '—';
+    return `
     <tr>
       <td class="muted">${c.entryTime || '—'}</td>
       <td class="mono">${d.doNo}</td>
       <td class="mono">${c.no}</td>
-      <td class="muted">${d.emklName}</td>
+      <td class="muted">${c.customerName || d.emklName}</td>
+      <td class="muted">${vesselTxt}</td>
       <td>${statusBadge(c.gateStatus)}</td>
     </tr>
-  `).join('');
+  `;
+  }).join('');
 }
 
 function renderStats() {
@@ -4614,6 +4689,20 @@ function onDepotInContainerNoInput() {
     gradeSelect.value = grade;
   } else {
     hint.innerHTML = '';
+  }
+
+  const reg = regLookup(no);
+  const custName = document.getElementById('din-customer');
+  const custCode = document.getElementById('din-customer-code');
+  if (reg && reg.emklCustomerName && !custName.value.trim()) {
+    custName.value = reg.emklCustomerName;
+    custName.placeholder = 'Terisi otomatis dari data EMKL (' + reg.emklName + ')';
+  }
+  if (reg && reg.emklCustomerCode && !custCode.value.trim()) {
+    custCode.value = reg.emklCustomerCode;
+  }
+  if (reg && reg.savedAsGateOut) {
+    hint.innerHTML += ' <span class="grade-badge" style="background:#fde68a;color:#78350f;"><i class="ti ti-alert-triangle"></i>Kontainer ini sudah pernah keluar depot (Gate OUT) — cek riwayat sebelum entry ulang.</span>';
   }
 }
 
@@ -4721,6 +4810,11 @@ function saveDepotInEntry() {
 
   depotInEntries.push(entry);
   depotInSeq++;
+  regUpsert(entry.containerNo, {
+    vesselName: entry.vesselName, voy: entry.voy, blNo: entry.blNo, principal: entry.principal,
+    dischargeDate: entry.dischargeDate, grade: entry.grade, size: entry.size, type: entry.type,
+    depotInCustomerName: entry.customerName, depotInCustomerCode: entry.customerCode,
+  });
   pushLog('depotin', 'Depot IN entry disimpan', entry.transactId + ' — kontainer ' + entry.containerNo + ' (' + entry.principal + ')');
   flash('depotin-flash', 'Entry ' + entry.transactId + ' untuk kontainer ' + entry.containerNo + ' berhasil disimpan.', 'ok');
   resetDepotInForm();
