@@ -516,11 +516,7 @@
       </div>
     </div>
 
-    <div class="subtabs">
-      <button class="subtab active" id="subtab-in" onclick="switchAdminSub('in')"><i class="ti ti-anchor"></i> Masuk (dari Kapal)</button>
-      <button class="subtab" id="subtab-out" onclick="switchAdminSub('out')"><i class="ti ti-barrier-block"></i> Keluar (ke Customer)</button>
-    </div>
-    <div id="admin-sub-out" style="display:none;">
+    <div id="admin-sub-in">
     <div class="metrics">
       <div class="metric teal">
         <p class="m-label">DO terdaftar</p>
@@ -544,49 +540,9 @@
       </div>
     </div>
 
-    <div class="two-col">
-      <div class="panel">
-        <p class="panel-title"><i class="ti ti-scan"></i>Cocokkan truk masuk di gate in</p>
-        <p style="font-size: 12.5px; color: var(--ink-soft); margin: 0 0 12px;">Pilih DO, lalu masukkan nomor kontainer fisik di truk untuk dicocokkan. Ukuran dan tipe kontainer otomatis mengikuti data yang sudah didaftarkan EMKL — tidak perlu dipilih ulang.</p>
-
-        <div class="warn-box" id="unpaid-warn"><i class="ti ti-lock"></i><span>DO ini belum lunas — truk tidak bisa lanjut ke proses survey sampai pembayaran selesai.</span></div>
-
-        <div class="scan-row">
-          <select id="scan-do" onchange="onScanDoChange()"></select>
-        </div>
-        <div class="scan-pending-info" id="scan-pending-info" style="font-size:12.5px; color:var(--ink-soft); margin-bottom:10px;"></div>
-        <div class="scan-row">
-          <input type="text" id="scan-actual" placeholder="Nomor kontainer fisik di truk" class="mono-input">
-          <button class="btn btn-scanqr" onclick="openQrScanner('gatein')"><i class="ti ti-qrcode"></i>Scan QR Kamera</button>
-          <button class="btn btn-primary" onclick="scanTruck()" id="scan-btn"><i class="ti ti-barrier-block"></i>Cocokkan</button>
-        </div>
-      </div>
-
-      <div class="panel">
-        <p class="panel-title"><i class="ti ti-bell-ringing"></i>Log notifikasi</p>
-        <div id="notif-log"></div>
-      </div>
-    </div>
-    </div>
-
-    <div id="admin-sub-in">
-    <div class="metrics">
-      <div class="metric teal">
-        <p class="m-label">Entry Depot IN</p>
-        <p class="m-value" id="stat-depotin-total">0</p>
-      </div>
-      <div class="metric teal">
-        <p class="m-label">Entry hari ini</p>
-        <p class="m-value" id="stat-depotin-today">0</p>
-      </div>
-      <div class="metric amber">
-        <p class="m-label">Belum disurvei</p>
-        <p class="m-value" id="stat-depotin-unsurveyed">0</p>
-      </div>
-      <div class="metric red">
-        <p class="m-label">Grade FG (Food Grade)</p>
-        <p class="m-value" id="stat-depotin-fg">0</p>
-      </div>
+    <div class="panel">
+      <p class="panel-title"><i class="ti ti-bell-ringing"></i>Log notifikasi</p>
+      <div id="notif-log"></div>
     </div>
 
     <div class="panel">
@@ -1013,8 +969,6 @@ function handleQrResult(text) {
 
   if (mode === 'depotin') {
     applyQrToDepotIn(parsed, text);
-  } else if (mode === 'gatein') {
-    applyQrToGateIn(parsed, text);
   }
 
   setTimeout(closeQrScanner, 900);
@@ -1036,24 +990,6 @@ function applyQrToDepotIn(parsed, raw) {
     contInput.value = raw.trim();
     onDepotInContainerNoInput();
     flash('depotin-flash', 'QR terbaca, nomor kontainer diisi otomatis. Mohon periksa kembali data lainnya.', 'ok');
-  }
-}
-
-function applyQrToGateIn(parsed, raw) {
-  const actualInput = document.getElementById('scan-actual');
-  if (parsed && parsed.CONT) {
-    actualInput.value = parsed.CONT;
-    if (parsed.DO) {
-      const d = dos.find(x => x.doNo === parsed.DO);
-      if (d) {
-        document.getElementById('scan-do').value = String(d.id);
-        onScanDoChange();
-      }
-    }
-    setQrStatus('Kontainer ' + parsed.CONT + ' otomatis terisi. Silakan klik Cocokkan.', 'ok');
-  } else if (raw) {
-    actualInput.value = raw.trim();
-    setQrStatus('Nomor kontainer diisi otomatis. Silakan klik Cocokkan.', 'ok');
   }
 }
 
@@ -4555,84 +4491,8 @@ function renderDoCards() {
 }
 
 /* ===== Admin dashboard render ===== */
-function onScanDoChange() {
-  const doId = parseInt(document.getElementById('scan-do').value);
-  const d = dos.find(x => x.id === doId);
-  const pendingInfo = document.getElementById('scan-pending-info');
-  const warnBox = document.getElementById('unpaid-warn');
-  const scanBtn = document.getElementById('scan-btn');
-
-  if (!d) {
-    pendingInfo.innerHTML = '';
-    warnBox.classList.remove('show');
-    scanBtn.disabled = false;
-    return;
-  }
-
-  const waiting = d.containers.filter(c => c.gateStatus === 'menunggu');
-  pendingInfo.innerHTML = waiting.length
-    ? 'Menunggu di DO ini:<br>' + waiting.map(c => {
-        const reg = regLookup(c.no);
-        const vesselInfo = reg && reg.vesselName ? ` — vessel <b>${reg.vesselName}</b> voy ${reg.voy || '—'} · BL ${reg.blNo || '—'}` : ' — <span style="color:#92400e;">belum ada data Depot IN</span>';
-        const custInfo = c.customerName ? ` · cust: ${c.customerName}` : '';
-        return `<span class="mono">${c.no}</span> (${c.size} ${c.type})${vesselInfo}${custInfo}`;
-      }).join('<br>')
-    : 'Semua kontainer di DO ini sudah diproses.';
-
-  if (d.paymentStatus === 'belum') {
-    warnBox.classList.add('show');
-    scanBtn.disabled = true;
-  } else {
-    warnBox.classList.remove('show');
-    scanBtn.disabled = false;
-  }
-}
-
-function renderScanOptions() {
-  const sel = document.getElementById('scan-do');
-  const withWaiting = dos.filter(d => d.containers.some(c => c.gateStatus === 'menunggu'));
-  const prevVal = sel.value;
-  if (withWaiting.length === 0) {
-    sel.innerHTML = '<option value="">Tidak ada DO menunggu</option>';
-  } else {
-    sel.innerHTML = withWaiting.map(d => `<option value="${d.id}">${d.doNo} — ${d.emklName} ${d.paymentStatus === 'belum' ? '(belum lunas)' : ''}</option>`).join('');
-  }
-  if ([...sel.options].some(o => o.value === prevVal)) sel.value = prevVal;
-  onScanDoChange();
-}
-
 function normalizeContainerNo(s) {
   return (s || '').toUpperCase().replace(/\s+/g, '');
-}
-
-function scanTruck() {
-  const doId = parseInt(document.getElementById('scan-do').value);
-  const actual = document.getElementById('scan-actual').value.trim();
-  const d = dos.find(x => x.id === doId);
-  if (!d || !actual) return;
-  if (d.paymentStatus === 'belum') return;
-
-  const waiting = d.containers.filter(x => x.gateStatus === 'menunggu');
-  if (waiting.length === 0) return;
-
-  // Cari kontainer yang menunggu di DO ini yang nomornya cocok persis.
-  // Ukuran & tipe otomatis ikut data kontainer tsb (sudah didaftarkan EMKL), tidak perlu dipilih manual.
-  const exactMatch = waiting.find(x => normalizeContainerNo(x.no) === normalizeContainerNo(actual));
-  // Kalau tidak ada yang cocok persis, anggap ini kontainer yang paling awal ditunggu di DO ini
-  // (itulah yang seharusnya datang), lalu tandai mismatch terhadap kontainer tsb.
-  const c = exactMatch || waiting[0];
-
-  if (exactMatch) {
-    c.gateStatus = 'valid';
-    pushLog('wa', 'Kontainer valid di gate in', c.no + ' (' + c.size + ' ' + c.type + ') cocok dengan DO ' + d.doNo, d.doNo);
-  } else {
-    c.gateStatus = 'mismatch';
-    pushLog('mismatch', 'Mismatch terdeteksi', 'Fisik "' + actual + '" tidak cocok dengan DO ' + d.doNo + ' (' + c.no + ')', d.doNo);
-    pushLog('mismatch', 'Notifikasi terkirim ke EMKL', d.emklName + ' diberi tahu untuk verifikasi ulang', d.doNo);
-  }
-  c.entryTime = nowStr();
-  document.getElementById('scan-actual').value = '';
-  renderAll();
 }
 
 function renderActivityTable() {
@@ -4720,14 +4580,6 @@ function renderLog() {
 const depotInEntries = [];
 let depotInSeq = 1;
 const RECEIVE_TYPE_CODE = { 'NORMAL IMPORT': 'IM', 'EMPTY IMPORT': 'EM' };
-
-function switchAdminSub(sub) {
-  document.getElementById('admin-sub-out').style.display = sub === 'out' ? '' : 'none';
-  document.getElementById('admin-sub-in').style.display = sub === 'in' ? '' : 'none';
-  document.getElementById('subtab-out').classList.toggle('active', sub === 'out');
-  document.getElementById('subtab-in').classList.toggle('active', sub === 'in');
-  if (sub === 'in') document.getElementById('din-transact-preview').textContent = 'TRX-' + String(depotInSeq).padStart(6, '0');
-}
 
 function assignAutoBLNo() {
   const rand = Math.floor(100000 + Math.random() * 900000);
@@ -5114,15 +4966,15 @@ async function exportToExcel() {
   buildStyledSheet(wb, 'DO', doHeaders, doRows, [5, 6, 7]);
 
   const gateLabel = { menunggu: 'Menunggu', valid: 'Valid', mismatch: 'Mismatch' };
-  const containerHeaders = ['ID Kontainer', 'Nomor DO', 'No. Kontainer', 'Ukuran', 'Tipe', 'Status Gate', 'Waktu Masuk', 'Kode Gate', 'Biaya Kontainer (Rp)', 'Biaya BBM (Rp)'];
+  const containerHeaders = ['ID Kontainer', 'Nomor DO', 'Nama Customer', 'No. Kontainer', 'Ukuran', 'Tipe', 'Status Gate', 'Waktu Masuk', 'Kode Gate', 'Biaya Kontainer (Rp)', 'Biaya BBM (Rp)'];
   const containerRows = [];
   dos.forEach(d => d.containers.forEach(c => {
     containerRows.push([
-      c.id, d.doNo, c.no, c.size, c.type, gateLabel[c.gateStatus] || c.gateStatus,
+      c.id, d.doNo, c.customerName || d.emklName, c.no, c.size, c.type, gateLabel[c.gateStatus] || c.gateStatus,
       c.entryTime || '', c.gateCode, RATE[c.size], BBM_RATE[c.size],
     ]);
   }));
-  buildStyledSheet(wb, 'Kontainer', containerHeaders, containerRows, [8, 9]);
+  buildStyledSheet(wb, 'Kontainer', containerHeaders, containerRows, [9, 10]);
 
   const jenisLabel = { wa: 'Valid', mismatch: 'Mismatch', pay: 'Pembayaran' };
   const logHeaders = ['Waktu', 'Jenis', 'Judul', 'Deskripsi', 'Nomor DO Terkait'];
@@ -5144,7 +4996,6 @@ async function exportToExcel() {
 
 function renderAll() {
   renderDoCards();
-  renderScanOptions();
   renderAdminTable();
   renderStats();
   saveState();
