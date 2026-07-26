@@ -244,7 +244,7 @@
   /* Container rows in form */
   .container-rows { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
   .container-row { border: 1px solid var(--hair); border-radius: 8px; padding: 8px; }
-  .container-row-main { display: grid; grid-template-columns: 1.6fr 1.4fr 0.9fr auto; gap: 8px; align-items: center; }
+  .container-row-main { display: grid; grid-template-columns: 1.5fr 1.3fr 0.75fr 0.9fr auto; gap: 8px; align-items: center; }
   .c-hint { font-size: 11.5px; color: var(--ink-soft); margin: 6px 2px 0; min-height: 1px; }
   .c-hint.found { color: #166534; }
   .c-hint.missing { color: #92400e; }
@@ -569,6 +569,7 @@
           <div class="two-inline">
             <input type="text" id="din-blno" class="mono-input" placeholder="BL number">
             <button type="button" class="btn btn-ghost btn-sm" onclick="assignAutoBLNo()" style="flex:none;"><i class="ti ti-wand"></i>Auto</button>
+            <button type="button" class="btn btn-scanqr btn-sm" style="flex:none;" onclick="openQrScanner('blno')"><i class="ti ti-qrcode"></i>Scan QR</button>
           </div>
         </div>
         <div class="field">
@@ -853,7 +854,7 @@
 /* ===== QR CAMERA SCANNER (jsQR) ===== */
 let qrsStream = null;
 let qrsRafId = null;
-let qrsMode = null;           // 'depotin' | 'gatein'
+let qrsMode = null;           // 'depotin' | 'blno'
 let qrsCameras = [];
 let qrsCameraIndex = 0;
 let qrsScanning = false;
@@ -969,6 +970,8 @@ function handleQrResult(text) {
 
   if (mode === 'depotin') {
     applyQrToDepotIn(parsed, text);
+  } else if (mode === 'blno') {
+    applyQrToBLNo(parsed, text);
   }
 
   setTimeout(closeQrScanner, 900);
@@ -990,6 +993,19 @@ function applyQrToDepotIn(parsed, raw) {
     contInput.value = raw.trim();
     onDepotInContainerNoInput();
     flash('depotin-flash', 'QR terbaca, nomor kontainer diisi otomatis. Mohon periksa kembali data lainnya.', 'ok');
+  }
+}
+
+function applyQrToBLNo(parsed, raw) {
+  const blInput = document.getElementById('din-blno');
+  if (parsed && (parsed.BL || parsed.DO)) {
+    // Format gate pass S-GATE: pakai nomor BL kalau ada, kalau tidak fallback ke nomor DO.
+    blInput.value = parsed.BL || parsed.DO;
+    flash('depotin-flash', 'QR terbaca — BL/DO No otomatis terisi: ' + blInput.value + '.', 'ok');
+  } else if (raw) {
+    // Bukan format gate pass S-GATE, tetap coba isi apa adanya sebagai nomor BL/DO.
+    blInput.value = raw.trim();
+    flash('depotin-flash', 'QR terbaca, BL/DO No diisi otomatis. Mohon periksa kembali datanya.', 'ok');
   }
 }
 
@@ -3909,7 +3925,8 @@ function addContainerRow() {
     <div class="container-row-main">
       <input type="text" class="mono-input c-no" placeholder="Nomor kontainer, mis. TCLU 771205 4" oninput="onDoContainerNoInput('${rid}')">
       <input type="text" class="c-cust" placeholder="Nama customer untuk kontainer ini">
-      <select class="c-size"><option>20'</option><option>40'</option></select>
+      <select class="c-size"><option>20'</option><option>40'</option><option>45'</option></select>
+      <select class="c-type"><option value="GP">GP (General Purpose)</option><option value="HC">HC (High Cube)</option><option value="RF">RF (Reefer)</option><option value="OT">OT (Open Top)</option><option value="FR">FR (Flat Rack)</option><option value="TK">TK (Tank)</option></select>
       <button type="button" class="btn-icon" onclick="removeContainerRow('${rid}')" aria-label="Hapus baris"><i class="ti ti-trash"></i></button>
     </div>
     <div class="c-hint" id="${rid}-hint"></div>
@@ -3962,9 +3979,8 @@ function fillSample() {
   });
 }
 
-const RATE = { "20'": 350000, "40'": 500000 };
-const BBM_RATE = { "20'": 150000, "40'": 200000 };
-const DEFAULT_TYPE = 'Dry';
+const RATE = { "20'": 350000, "40'": 500000, "45'": 550000 };
+const BBM_RATE = { "20'": 150000, "40'": 200000, "45'": 220000 };
 
 function makeGateCode() {
   return Math.random().toString(36).slice(2, 8).toUpperCase();
@@ -3980,7 +3996,8 @@ function submitDO() {
     const no = r.querySelector('.c-no').value.trim();
     const custName = r.querySelector('.c-cust').value.trim();
     const size = r.querySelector('.c-size').value;
-    if (no) containers.push({ id: containerSeq++, no, size, type: DEFAULT_TYPE, gateStatus: 'menunggu', entryTime: null, gateCode: makeGateCode(), customerName: custName });
+    const type = r.querySelector('.c-type').value;
+    if (no) containers.push({ id: containerSeq++, no, size, type, gateStatus: 'menunggu', entryTime: null, gateCode: makeGateCode(), customerName: custName });
   });
 
   if (!doNo || containers.length === 0) {
