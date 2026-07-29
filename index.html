@@ -1046,7 +1046,12 @@ function applyQrToDepotIn(parsed, raw) {
       if (cleanMatch) cleanSel.value = cleanMatch.value;
     }
 
-    // Principal — kalau sudah pernah tercatat sebelumnya (mis. dari entry Depot IN awal)
+    // Vessel & Voy — dari data PDF DO/BL yang dibaca EMKL saat daftar DO
+    if (parsed.VESSEL) document.getElementById('din-vessel').value = parsed.VESSEL;
+    if (parsed.VOY) document.getElementById('din-voy').value = parsed.VOY;
+
+    // Principal — dari data PDF DO/BL yang dibaca EMKL, atau kalau tidak ada, dari
+    // entry Depot IN kontainer ini sebelumnya
     if (parsed.PRINCIPAL) {
       const principalSel = document.getElementById('din-principal');
       const principalMatch = [...principalSel.options].find(o => o.value === parsed.PRINCIPAL);
@@ -3774,6 +3779,9 @@ let logs = [];
 let doSeq = 1;
 let containerSeq = 1;
 let rowSeq = 1;
+// Vessel/Voy/Principal hasil baca PDF DO/BL disimpan di sini sampai submitDO() dipanggil,
+// supaya ikut tersimpan di data DO dan bisa dimasukkan ke barcode gate pass per kontainer.
+let currentDoPdfMeta = null; // { vessel, voyage, principal } | null
 
 /* ================= REGISTRY KONTAINER TERINTEGRASI =================
    Satu sumber data bersama antara Depot IN dan Depot OUT (DO/EMKL), pakai
@@ -4135,6 +4143,22 @@ function pdfParseCustomer(pageLines, lines) {
   return customer;
 }
 
+// Deteksi principal/pelayaran dari isi PDF (nama biasanya muncul di kop surat DO/BL),
+// dicocokkan ke daftar nama yang sama persis dengan opsi dropdown Principal di admin gate.
+const PDF_PRINCIPAL_ALIASES = [
+  { re: /HAPAG[\s-]?LLOYD/i, value: 'HAPAG-LLOYD' },
+  { re: /\bRCL\b|Regional Container Lines/i, value: 'RCL' },
+  { re: /MAERSK/i, value: 'MAERSK LINE' },
+  { re: /\bMSC\b|Mediterranean Shipping/i, value: 'MSC' },
+  { re: /CMA[\s-]?CGM/i, value: 'CMA CGM' },
+  { re: /Ocean Network Express|\bONE\b/i, value: 'ONE (Ocean Network Express)' },
+  { re: /EVERGREEN/i, value: 'EVERGREEN LINE' },
+];
+function pdfParsePrincipal(fullText) {
+  const hit = PDF_PRINCIPAL_ALIASES.find(p => p.re.test(fullText));
+  return hit ? hit.value : null;
+}
+
 async function parseDoPdf(file) {
   const pageLines = await extractPdfStructured(file);
   const lines = pdfFlattenLines(pageLines);
@@ -4147,8 +4171,9 @@ async function parseDoPdf(file) {
   const eta = etaMatch ? etaMatch[1].replace(/\s+/g, ' ').trim() : null;
   const customer = pdfParseCustomer(pageLines, lines);
   const containers = pdfParseContainers(lines);
+  const principal = pdfParsePrincipal(fullText);
 
-  return { doNo, vessel, voyage, eta, customer, containers };
+  return { doNo, vessel, voyage, eta, customer, containers, principal };
 }
 
 function handleDoPdfDrop(ev, box) {
@@ -4179,6 +4204,10 @@ async function runDoPdfParse(file) {
     if (parsed.doNo) document.getElementById('doNo').value = parsed.doNo;
     if (parsed.eta) document.getElementById('eta').value = parsed.eta;
 
+    currentDoPdfMeta = (parsed.vessel || parsed.voyage || parsed.principal)
+      ? { vessel: parsed.vessel || null, voyage: parsed.voyage || null, principal: parsed.principal || null }
+      : null;
+
     if (parsed.containers.length > 0) {
       document.getElementById('container-rows').innerHTML = '';
       parsed.containers.forEach(c => {
@@ -4197,6 +4226,7 @@ async function runDoPdfParse(file) {
       status.className = 'c-hint found';
       status.innerHTML = `<i class="ti ti-check"></i> Berhasil membaca ${parsed.containers.length} kontainer` +
         (parsed.vessel ? ` dari vessel ${parsed.vessel}${parsed.voyage ? ' voy ' + parsed.voyage : ''}` : '') +
+        (parsed.principal ? ` (${parsed.principal})` : '') +
         `. Mohon periksa kembali datanya sebelum klik "Daftarkan ke sistem".`;
     } else {
       status.className = 'c-hint missing';
@@ -4214,6 +4244,7 @@ function fillSample() {
   document.getElementById('eta').value = 'Hari ini, ' + (13 + n % 4) + ':00';
   document.getElementById('komoditas').value = 'Jagung';
   onKomoditasInput();
+  currentDoPdfMeta = { vessel: 'MAERSK SEMBAWANG', voyage: '142W', principal: 'MAERSK LINE' };
   document.getElementById('container-rows').innerHTML = '';
   const samples = [
     ['TCLU 771205 4', "20'", 'PT Nusantara Cargo'],
@@ -4314,6 +4345,9 @@ function submitDO() {
   dos.push({
     id: doSeq++, doNo, emklId: currentUser.id, emklName: currentUser.company,
     eta, komoditas, washingCategory: washingCat ? washingCat.key : null, washingLabel: washingCat ? washingCat.label : null,
+    vessel: currentDoPdfMeta ? currentDoPdfMeta.vessel : null,
+    voy: currentDoPdfMeta ? currentDoPdfMeta.voyage : null,
+    principal: currentDoPdfMeta ? currentDoPdfMeta.principal : null,
     paymentStatus: 'belum', containerFee, bbmFee, washingFee, amount, containers,
   });
 
@@ -4321,6 +4355,8 @@ function submitDO() {
   document.getElementById('eta').value = '';
   document.getElementById('komoditas').value = '';
   document.getElementById('komoditas-hint').innerHTML = '';
+  document.getElementById('do-pdf-status').innerHTML = '';
+  currentDoPdfMeta = null;
   resetContainerRows();
 
   flash('emkl-flash', 'DO ' + doNo + ' terdaftar dengan ' + containers.length + ' kontainer. Selesaikan pembayaran agar bisa diproses di gate.', 'ok');
@@ -4482,11 +4518,12 @@ function todayLong() {
    supaya saat petugas admin gate scan QR ini di form Depot IN, field Principal, Customer
    Name, Type, dan Cleaning bisa langsung terisi otomatis (bukan cuma nomor kontainer & size). */
 function containerQRDataURL(d, c) {
-  const reg = regLookup(c.no); // principal biasanya sudah tercatat dari entry Depot IN sebelumnya
+  const reg = regLookup(c.no); // fallback kalau principal belum diketahui dari PDF DO
   const washCode = d.washingCategory ? (WASHING_CODE_BY_KEY[d.washingCategory] || '') : '';
+  const principal = d.principal || (reg && reg.principal) || '';
   const payload = 'SGATE|DO:' + d.doNo + '|CONT:' + c.no + '|SIZE:' + c.size + '|CODE:' + c.gateCode +
     '|CUST:' + (c.customerName || '') + '|TYPE:' + (c.type || '') + '|WASH:' + washCode +
-    '|PRINCIPAL:' + (reg && reg.principal ? reg.principal : '');
+    '|PRINCIPAL:' + principal + '|VESSEL:' + (d.vessel || '') + '|VOY:' + (d.voy || '');
   const qr = qrcode(0, 'M');
   qr.addData(payload);
   qr.make();
