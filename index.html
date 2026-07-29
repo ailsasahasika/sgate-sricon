@@ -6,6 +6,7 @@
 <title>S-GATE — Prototipe Fase 1</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.47.0/iconfont/tabler-icons.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
   :root {
     --ink: #0d2b26;
@@ -242,6 +243,9 @@
   .auth-sub { font-size: 12.5px; color: var(--ink-soft); margin: 0 0 20px; }
 
   /* Container rows in form */
+  .pdf-upload-box { border: 1.5px dashed var(--teal); border-radius: 10px; padding: 14px 16px; margin-bottom: 4px; background: #f0fdfa; transition: background .15s; }
+  .pdf-upload-box:hover { background: #ccfbf1; }
+  .pdf-upload-box.dragover { background: #ccfbf1; border-color: var(--teal-deep); }
   .container-rows { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
   .container-row { border: 1px solid var(--hair); border-radius: 8px; padding: 8px; }
   .container-row-main { display: grid; grid-template-columns: 1.5fr 1.3fr 0.75fr 0.9fr auto; gap: 8px; align-items: center; }
@@ -453,6 +457,19 @@
 
       <div class="panel">
         <p class="panel-title"><i class="ti ti-file-plus"></i>Daftarkan DO baru</p>
+
+        <div class="pdf-upload-box" id="pdf-upload-box" ondragover="event.preventDefault(); this.classList.add('dragover');" ondragleave="this.classList.remove('dragover');" ondrop="handleDoPdfDrop(event, this)">
+          <label for="do-pdf-input" style="display:flex; align-items:center; gap:10px; cursor:pointer;">
+            <i class="ti ti-file-type-pdf" style="font-size:22px; color:#b91c1c;"></i>
+            <span>
+              <b>Upload PDF DO / BL</b> — nomor DO, vessel, voyage, dan daftar kontainer akan otomatis terisi dari PDF-nya.<br>
+              <span style="font-size:12px; color:var(--ink-soft);">Mendukung format Delivery Order maupun Customer Release. Klik atau drag file PDF ke sini.</span>
+            </span>
+          </label>
+          <input type="file" id="do-pdf-input" accept="application/pdf" style="display:none;" onchange="handleDoPdfUpload(this)">
+        </div>
+        <div class="c-hint" id="do-pdf-status" style="margin: 6px 2px 14px;"></div>
+
         <div class="grid-form">
           <div class="field">
             <label for="doNo">Nomor DO</label>
@@ -461,6 +478,11 @@
           <div class="field">
             <label for="eta">Rencana kedatangan</label>
             <input type="text" id="eta" placeholder="Hari ini, 14:00">
+          </div>
+          <div class="field" style="grid-column: 1 / -1;">
+            <label for="komoditas">Komoditas</label>
+            <input type="text" id="komoditas" placeholder="mis. Jagung, Kedelai, Tembakau..." oninput="onKomoditasInput()">
+            <div class="c-hint" id="komoditas-hint" style="margin: 6px 2px 0;"></div>
           </div>
         </div>
 
@@ -3959,10 +3981,195 @@ function removeContainerRow(rid) {
   document.getElementById(rid).remove();
 }
 
+/* ===== Upload PDF DO/BL — baca otomatis nomor DO, vessel, voyage, & daftar kontainer =====
+   Didesain untuk menangani beberapa format umum (Delivery Order khas pelayaran & Customer
+   Release/Container Release), berbasis posisi teks (x,y) dari PDF, bukan cuma urutan teks
+   biasa, supaya field yang berdampingan di form PDF (mis. Vessel & Voyage Number di kolom
+   sebelahan) tidak ketuker. Karena ini hasil pembacaan otomatis, hasilnya tetap ditaruh di
+   form yang sama supaya bisa dicek & diedit manual dulu sebelum "Daftarkan ke sistem". */
+
+if (window.pdfjsLib) {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+}
+
+const PDF_LABEL_WORDS = /^(DO Number|DO Expired Date|Vessel|Voyage(?: Number)?|Port of \w+|Consignee|Notify Party|Shipper\/?Exporter|BL No\.?|Bill of Lading|Delivery Order|Container( No)?|Seal( No)?|Size ?Type|Type|Weight(?: \(incl\. Tare\))?|Special|Shipment|Gross Weight|Depo Name|Phone Number|Reference|Remark|Pick up by|Valid until)\.?:?\s*$/i;
+
+async function extractPdfStructured(file) {
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  const pageLines = [];
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    const clusters = [];
+    content.items.forEach(item => {
+      if (!item.str || !item.str.trim()) return;
+      const y = item.transform[5];
+      const x = item.transform[4];
+      let cluster = clusters.find(c => Math.abs(c.y - y) <= 3);
+      if (!cluster) { cluster = { y, items: [] }; clusters.push(cluster); }
+      cluster.items.push({ x, str: item.str, width: item.width });
+    });
+    clusters.forEach(c => c.items.sort((a, b) => a.x - b.x));
+    clusters.sort((a, b) => b.y - a.y);
+    pageLines.push(clusters);
+  }
+  return pageLines;
+}
+
+function pdfFlattenLines(pageLines) {
+  const lines = [];
+  pageLines.forEach(clusters => {
+    clusters.forEach(c => {
+      let out = '', prevEnd = null;
+      c.items.forEach(it => {
+        if (prevEnd !== null) out += (it.x - prevEnd) > 8 ? '   ' : ' ';
+        out += it.str;
+        prevEnd = it.x + (it.width || it.str.length * 5);
+      });
+      lines.push(out.trim());
+    });
+  });
+  return lines.filter(Boolean);
+}
+
+// Cari value dari sebuah label form (mis. "Vessel", "DO Number"), pakai posisi (x,y):
+// coba dulu sisa teks di baris yang sama, kalau tidak ada baru cari ke beberapa baris di
+// bawahnya yang x-nya paling dekat dengan label (form/kolom biasanya rata kiri per kolom).
+function pdfExtractField(pageLines, labelRegex) {
+  for (const clusters of pageLines) {
+    for (let li = 0; li < clusters.length; li++) {
+      const items = clusters[li].items;
+      for (let ii = 0; ii < items.length; ii++) {
+        const it = items[ii];
+        if (!labelRegex.test(it.str)) continue;
+        const m = it.str.match(labelRegex);
+        const stripped = it.str.slice(m.index + m[0].length).replace(/^[:\s]+/, '').trim();
+        if (stripped && !PDF_LABEL_WORDS.test(stripped)) return stripped.split(/ {2,}/)[0].trim();
+        const rightItems = items.slice(ii + 1);
+        if (rightItems.length) {
+          const candidate = rightItems[0].str.trim();
+          if (candidate && !PDF_LABEL_WORDS.test(candidate)) return candidate;
+        }
+        const labelX = it.x;
+        for (let d = 1; d <= 4 && li + d < clusters.length; d++) {
+          const below = clusters[li + d].items.find(o => Math.abs(o.x - labelX) <= 45);
+          if (below && below.str.trim() && !PDF_LABEL_WORDS.test(below.str.trim())) return below.str.trim();
+        }
+      }
+    }
+  }
+  return null;
+}
+
+// Baris tabel kontainer selalu diawali nomor kontainer (4 huruf + 6-7 digit), lalu di baris
+// yang sama ada kode ukuran+tipe (mis. 45GP, 40HC). Kolom lain (No. Seal, dsb.) sengaja
+// diabaikan karena polanya beda (tidak match sebagai ukuran+tipe).
+function pdfParseContainers(lines) {
+  const contLineRe = /^([A-Z]{4})\s?(\d{6,7})\b/;
+  const sizeTypeRe = /(\d{2})\s?['’]?\s?(GP|HC|RF|OT|FR|TK|RH|PW|TD|HR)\b/i;
+  const containers = [];
+  const seen = new Set();
+  lines.forEach(line => {
+    const m = line.match(contLineRe);
+    if (!m) return;
+    const no = m[1] + ' ' + m[2];
+    const st = line.slice(m[0].length).match(sizeTypeRe);
+    if (!st || seen.has(no)) return;
+    seen.add(no);
+    containers.push({ no, size: st[1] + "'", type: st[2].toUpperCase() });
+  });
+  return containers;
+}
+
+function pdfParseCustomer(pageLines, lines) {
+  let customer = pdfExtractField(pageLines, /Notify Party/i) || pdfExtractField(pageLines, /Consignee/i);
+  if (!customer) {
+    const ptLines = lines.filter(l => /^PT\.?\s/i.test(l.trim())).map(l => l.split(/ {2,}/)[0].trim());
+    customer = ptLines.length >= 2 ? ptLines[1] : (ptLines[0] || null);
+  }
+  return customer;
+}
+
+async function parseDoPdf(file) {
+  const pageLines = await extractPdfStructured(file);
+  const lines = pdfFlattenLines(pageLines);
+  const fullText = lines.join('\n');
+
+  const doNo = pdfExtractField(pageLines, /DO\s*Number/i) || pdfExtractField(pageLines, /BL\s*No\.?/i) || pdfExtractField(pageLines, /Bill of Lading/i);
+  const vessel = pdfExtractField(pageLines, /Vessel\s*:?/i);
+  const voyage = pdfExtractField(pageLines, /Voy(?:age)?\s*(?:Number)?\s*:?/i);
+  const etaMatch = fullText.match(/ETA:?\s*\n?\s*([\d]{1,2}[.\-/][\d]{1,2}[.\-/][\d]{2,4}(?:\s+[\d]{1,2}[:.][\d]{2})?)/i);
+  const eta = etaMatch ? etaMatch[1].replace(/\s+/g, ' ').trim() : null;
+  const customer = pdfParseCustomer(pageLines, lines);
+  const containers = pdfParseContainers(lines);
+
+  return { doNo, vessel, voyage, eta, customer, containers };
+}
+
+function handleDoPdfDrop(ev, box) {
+  ev.preventDefault();
+  box.classList.remove('dragover');
+  const file = ev.dataTransfer.files && ev.dataTransfer.files[0];
+  if (file) runDoPdfParse(file);
+}
+
+function handleDoPdfUpload(input) {
+  const file = input.files && input.files[0];
+  if (file) runDoPdfParse(file);
+}
+
+async function runDoPdfParse(file) {
+  const status = document.getElementById('do-pdf-status');
+  if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+    status.className = 'c-hint missing';
+    status.textContent = 'File harus berformat PDF.';
+    return;
+  }
+  status.className = 'c-hint';
+  status.innerHTML = '<i class="ti ti-loader-2"></i> Membaca PDF...';
+
+  try {
+    const parsed = await parseDoPdf(file);
+
+    if (parsed.doNo) document.getElementById('doNo').value = parsed.doNo;
+    if (parsed.eta) document.getElementById('eta').value = parsed.eta;
+
+    if (parsed.containers.length > 0) {
+      document.getElementById('container-rows').innerHTML = '';
+      parsed.containers.forEach(c => {
+        addContainerRow();
+        const rows = document.querySelectorAll('.container-row');
+        const last = rows[rows.length - 1];
+        last.querySelector('.c-no').value = c.no;
+        if (parsed.customer) last.querySelector('.c-cust').value = parsed.customer;
+        const sizeSel = last.querySelector('.c-size');
+        if ([...sizeSel.options].some(o => o.value === c.size)) sizeSel.value = c.size;
+        const typeSel = last.querySelector('.c-type');
+        if ([...typeSel.options].some(o => o.value === c.type)) typeSel.value = c.type;
+        onDoContainerNoInput(last.id);
+      });
+
+      status.className = 'c-hint found';
+      status.innerHTML = `<i class="ti ti-check"></i> Berhasil membaca ${parsed.containers.length} kontainer` +
+        (parsed.vessel ? ` dari vessel ${parsed.vessel}${parsed.voyage ? ' voy ' + parsed.voyage : ''}` : '') +
+        `. Mohon periksa kembali datanya sebelum klik "Daftarkan ke sistem".`;
+    } else {
+      status.className = 'c-hint missing';
+      status.innerHTML = '<i class="ti ti-alert-triangle"></i> Tidak berhasil menemukan data kontainer di PDF ini. Silakan isi manual di bawah, atau coba file PDF lain.';
+    }
+  } catch (err) {
+    status.className = 'c-hint missing';
+    status.innerHTML = '<i class="ti ti-alert-triangle"></i> Gagal membaca PDF (' + (err && err.message ? err.message : 'error') + '). Silakan isi manual di bawah.';
+  }
+}
+
 function fillSample() {
   const n = dos.length + 1;
   document.getElementById('doNo').value = 'DO-2607-' + (140 + n);
   document.getElementById('eta').value = 'Hari ini, ' + (13 + n % 4) + ':00';
+  document.getElementById('komoditas').value = 'Jagung';
+  onKomoditasInput();
   document.getElementById('container-rows').innerHTML = '';
   const samples = [
     ['TCLU 771205 4', "20'", 'PT Nusantara Cargo'],
@@ -3982,6 +4189,40 @@ function fillSample() {
 const RATE = { "20'": 350000, "40'": 500000, "45'": 550000 };
 const BBM_RATE = { "20'": 150000, "40'": 200000, "45'": 220000 };
 
+/* ===== Biaya washing — ditentukan otomatis dari komoditas (1 DO = 1 komoditas) =====
+   Catatan: tarif Hapag & RCL sama persis di semua kategori, jadi principal tidak
+   memengaruhi angkanya — cukup kategori komoditas + ukuran kontainer (20' vs 40'/45'). */
+const WASHING_CATEGORIES = [
+  { key: 'chemical', label: 'Chemical Washing', keywords: ['makanan ternak', 'tembakau', 'cengkeh', 'batu bara', 'cangkang kelapa sawit'], rate20: 150000, rate40: 300000 },
+  { key: 'water', label: 'Water Washing', keywords: ['kedelai', 'limbah kertas', 'creamer'], rate20: 100000, rate40: 200000 },
+  { key: 'sweeping', label: 'Sweeping', keywords: ['jagung', 'kardus', 'lem'], rate20: 50000, rate40: 100000 },
+];
+
+function detectWashingCategory(komoditas) {
+  const c = (komoditas || '').toLowerCase().trim();
+  if (!c) return null;
+  return WASHING_CATEGORIES.find(cat => cat.keywords.some(k => c.includes(k))) || null;
+}
+
+function washingRateForSize(cat, size) {
+  if (!cat) return 0;
+  return size === "20'" ? cat.rate20 : cat.rate40; // 40' & 45' pakai tarif yang sama
+}
+
+function onKomoditasInput() {
+  const hint = document.getElementById('komoditas-hint');
+  const val = document.getElementById('komoditas').value;
+  if (!val.trim()) { hint.className = 'c-hint'; hint.innerHTML = ''; return; }
+  const cat = detectWashingCategory(val);
+  if (cat) {
+    hint.className = 'c-hint found';
+    hint.innerHTML = `<i class="ti ti-droplet"></i> Kategori: <b>${cat.label}</b> — Rp ${cat.rate20.toLocaleString('id-ID')}/20' · Rp ${cat.rate40.toLocaleString('id-ID')}/40'-45'`;
+  } else {
+    hint.className = 'c-hint missing';
+    hint.innerHTML = '<i class="ti ti-alert-triangle"></i> Komoditas ini belum ada di daftar kategori washing — biaya washing akan Rp 0. Hubungi admin untuk menambahkan kategorinya.';
+  }
+}
+
 function makeGateCode() {
   return Math.random().toString(36).slice(2, 8).toUpperCase();
 }
@@ -3989,6 +4230,8 @@ function makeGateCode() {
 function submitDO() {
   const doNo = document.getElementById('doNo').value.trim();
   const eta = document.getElementById('eta').value.trim();
+  const komoditas = document.getElementById('komoditas').value.trim();
+  const washingCat = detectWashingCategory(komoditas);
 
   const rows = document.querySelectorAll('.container-row');
   const containers = [];
@@ -4017,15 +4260,19 @@ function submitDO() {
 
   const containerFee = containers.reduce((sum, c) => sum + RATE[c.size], 0);
   const bbmFee = containers.reduce((sum, c) => sum + BBM_RATE[c.size], 0);
-  const amount = containerFee + bbmFee;
+  const washingFee = containers.reduce((sum, c) => sum + washingRateForSize(washingCat, c.size), 0);
+  const amount = containerFee + bbmFee + washingFee;
 
   dos.push({
     id: doSeq++, doNo, emklId: currentUser.id, emklName: currentUser.company,
-    eta, paymentStatus: 'belum', containerFee, bbmFee, amount, containers,
+    eta, komoditas, washingCategory: washingCat ? washingCat.key : null, washingLabel: washingCat ? washingCat.label : null,
+    paymentStatus: 'belum', containerFee, bbmFee, washingFee, amount, containers,
   });
 
   document.getElementById('doNo').value = '';
   document.getElementById('eta').value = '';
+  document.getElementById('komoditas').value = '';
+  document.getElementById('komoditas-hint').innerHTML = '';
   resetContainerRows();
 
   flash('emkl-flash', 'DO ' + doNo + ' terdaftar dengan ' + containers.length + ' kontainer. Selesaikan pembayaran agar bisa diproses di gate.', 'ok');
@@ -4053,6 +4300,18 @@ function openPaymentModal(id) {
   payingDoId = id;
   payingMethod = 'va_bca';
 
+  const washingCat = WASHING_CATEGORIES.find(c => c.key === d.washingCategory) || null;
+  const washingBlock = d.komoditas ? (
+    `<div class="pay-group-label">Biaya Washing${washingCat ? ' (' + washingCat.label + ')' : ' (komoditas tidak dikenali)'}</div>` +
+    d.containers.map(c => `
+      <div class="pay-summary-row">
+        <span class="c-no">${c.no} <span class="muted">(${c.size})</span></span>
+        <span>Rp ${washingRateForSize(washingCat, c.size).toLocaleString('id-ID')}</span>
+      </div>
+    `).join('') +
+    `<div class="pay-subtotal"><span>Subtotal washing</span><span>Rp ${(d.washingFee || 0).toLocaleString('id-ID')}</span></div>`
+  ) : '';
+
   document.getElementById('pay-do-no').textContent = d.doNo;
   document.getElementById('pay-breakdown').innerHTML =
     '<div class="pay-group-label">Biaya Kontainer</div>' +
@@ -4063,14 +4322,15 @@ function openPaymentModal(id) {
       </div>
     `).join('') +
     `<div class="pay-subtotal"><span>Subtotal kontainer</span><span>Rp ${d.containerFee.toLocaleString('id-ID')}</span></div>` +
-    '<div class="pay-group-label">Biaya BBM (bahan bakar alat/handling)</div>' +
+    '<div class="pay-group-label">Biaya Fuel Surcharge (bahan bakar alat/handling)</div>' +
     d.containers.map(c => `
       <div class="pay-summary-row">
         <span class="c-no">${c.no} <span class="muted">(${c.size})</span></span>
         <span>Rp ${BBM_RATE[c.size].toLocaleString('id-ID')}</span>
       </div>
     `).join('') +
-    `<div class="pay-subtotal"><span>Subtotal BBM</span><span>Rp ${d.bbmFee.toLocaleString('id-ID')}</span></div>`;
+    `<div class="pay-subtotal"><span>Subtotal Fuel Surcharge</span><span>Rp ${d.bbmFee.toLocaleString('id-ID')}</span></div>` +
+    washingBlock;
   document.getElementById('pay-total-value').textContent = 'Rp ' + d.amount.toLocaleString('id-ID');
 
   const expiry = new Date(Date.now() + 2 * 60 * 60 * 1000);
@@ -4178,18 +4438,37 @@ function containerQRDataURL(d, c) {
   return qr.createDataURL(5, 8);
 }
 
-/* ===== Kwitansi (kontainer & BBM) ===== */
+/* ===== Kwitansi (kontainer & Fuel Surcharge) ===== */
+function receiptMeta(d, kind) {
+  const washingCat = WASHING_CATEGORIES.find(c => c.key === d.washingCategory) || null;
+  if (kind === 'washing') {
+    return {
+      title: 'KWITANSI BIAYA WASHING' + (washingCat ? ' (' + washingCat.label + ')' : ''),
+      prefix: 'WSH', total: d.washingFee || 0, rateFn: c => washingRateForSize(washingCat, c.size),
+      sizeCol: 'Ukuran', noteLabel: 'biaya washing',
+    };
+  }
+  if (kind === 'kontainer') {
+    return {
+      title: 'KWITANSI BIAYA KONTAINER', prefix: 'KTR', total: d.containerFee, rateFn: c => RATE[c.size],
+      sizeCol: 'Ukuran / Tipe', noteLabel: 'biaya kontainer', showType: true,
+    };
+  }
+  return {
+    title: 'KWITANSI FUEL SURCHARGE', prefix: 'FSC', total: d.bbmFee, rateFn: c => BBM_RATE[c.size],
+    sizeCol: 'Ukuran', noteLabel: 'fuel surcharge',
+  };
+}
+
 function receiptDocHTML(d, kind) {
-  const isKontainer = kind === 'kontainer';
-  const title = isKontainer ? 'KWITANSI BIAYA KONTAINER' : 'KWITANSI BIAYA BBM';
-  const no = receiptNo(d, isKontainer ? 'KTR' : 'BBM');
-  const total = isKontainer ? d.containerFee : d.bbmFee;
-  const rateTable = isKontainer ? RATE : BBM_RATE;
+  const meta = receiptMeta(d, kind);
+  const no = receiptNo(d, meta.prefix);
+  const total = meta.total;
   const rows = d.containers.map(c => `
     <tr>
       <td class="mono">${c.no}</td>
-      <td>${c.size} ${isKontainer ? '· ' + c.type : ''}</td>
-      <td style="text-align:right;">Rp ${rateTable[c.size].toLocaleString('id-ID')}</td>
+      <td>${c.size}${meta.showType ? ' · ' + c.type : ''}</td>
+      <td style="text-align:right;">Rp ${meta.rateFn(c).toLocaleString('id-ID')}</td>
     </tr>
   `).join('');
 
@@ -4237,17 +4516,17 @@ function receiptDocHTML(d, kind) {
       <div class="brand">S-GATE<div class="sub">Sricon Smart Gate — Depo Sricon</div></div>
       <div class="meta">No. Kwitansi: <b>${no}</b><br>Tanggal: ${todayLong()}</div>
     </div>
-    <div class="title">${title}</div>
+    <div class="title">${meta.title}</div>
     <p style="font-size:13px; margin:0 0 4px;">Telah terima pembayaran dari:</p>
     <p style="font-size:14px; font-weight:600; margin:0 0 18px;">${d.emklName} &nbsp;<span style="font-weight:400; font-size:12.5px; color:#3d5c56;">— ${d.doNo}</span></p>
     <table>
-      <thead><tr><th>Kontainer</th><th>${isKontainer ? 'Ukuran / Tipe' : 'Ukuran'}</th><th style="text-align:right;">Biaya</th></tr></thead>
+      <thead><tr><th>Kontainer</th><th>${meta.sizeCol}</th><th style="text-align:right;">Biaya</th></tr></thead>
       <tbody>${rows}</tbody>
       <tr class="total-row"><td colspan="2">Total dibayar</td><td style="text-align:right;">Rp ${total.toLocaleString('id-ID')}</td></tr>
     </table>
     <p class="terbilang">Terbilang: ${terbilang(total)} rupiah.</p>
     <div class="foot">
-      <p class="note">Kwitansi ini diterbitkan otomatis oleh sistem S-GATE dan sah sebagai bukti pembayaran ${isKontainer ? 'biaya kontainer' : 'biaya BBM'} untuk DO tersebut di atas.</p>
+      <p class="note">Kwitansi ini diterbitkan otomatis oleh sistem S-GATE dan sah sebagai bukti pembayaran ${meta.noteLabel} untuk DO tersebut di atas.</p>
       <div class="sign">Depo Sricon
         <div class="stamp"><div><div class="s1">DEPO</div><div class="s2">SRICON</div><div class="s3">• SAH •</div></div></div>
         <div class="line">Admin Kasir</div>
@@ -4269,8 +4548,8 @@ function openReceipt(doId, kind) {
 /* ===== Kwitansi PDF asli (unduh langsung, dibuat dengan jsPDF) ===== */
 function buildReceiptPDF(d, kind) {
   const isKontainer = kind === 'kontainer';
-  const title = isKontainer ? 'KWITANSI BIAYA KONTAINER' : 'KWITANSI BIAYA BBM';
-  const no = receiptNo(d, isKontainer ? 'KTR' : 'BBM');
+  const title = isKontainer ? 'KWITANSI BIAYA KONTAINER' : 'KWITANSI FUEL SURCHARGE';
+  const no = receiptNo(d, isKontainer ? 'KTR' : 'FSC');
   const total = isKontainer ? d.containerFee : d.bbmFee;
   const rateTable = isKontainer ? RATE : BBM_RATE;
   const teal = [7, 61, 48];
@@ -4381,7 +4660,7 @@ function buildReceiptPDF(d, kind) {
   doc.setFontSize(7.5);
   const noteLines = doc.splitTextToSize(
     'Kwitansi ini diterbitkan otomatis oleh sistem S-GATE dan sah sebagai bukti pembayaran ' +
-    (isKontainer ? 'biaya kontainer' : 'biaya BBM') + ' untuk DO tersebut di atas.', 78);
+    (isKontainer ? 'biaya kontainer' : 'fuel surcharge') + ' untuk DO tersebut di atas.', 78);
   doc.text(noteLines, marginX, y);
 
   doc.setFont('helvetica', 'normal');
@@ -4418,7 +4697,7 @@ function downloadReceiptPDF(doId, kind) {
   const d = dos.find(x => x.id === doId);
   if (!d || d.paymentStatus !== 'lunas') return;
   const doc = buildReceiptPDF(d, kind);
-  const fname = (kind === 'kontainer' ? 'Kwitansi-Kontainer-' : 'Kwitansi-BBM-') + d.doNo + '.pdf';
+  const fname = (kind === 'kontainer' ? 'Kwitansi-Kontainer-' : 'Kwitansi-Fuel-Surcharge-') + d.doNo + '.pdf';
 
   // doc.save() relies on a synthetic click on an <a download> link, which some
   // sandboxed/embedded viewers silently block. Opening the PDF as a blob URL in a
@@ -4486,8 +4765,8 @@ function renderDoCards() {
         <div class="receipt-actions">
           <button class="btn btn-ghost btn-sm" onclick="openReceipt(${d.id}, 'kontainer')"><i class="ti ti-eye"></i>Lihat kwitansi kontainer</button>
           <button class="btn btn-primary btn-sm" onclick="downloadReceiptPDF(${d.id}, 'kontainer')"><i class="ti ti-download"></i>Unduh PDF kontainer</button>
-          <button class="btn btn-ghost btn-sm" onclick="openReceipt(${d.id}, 'bbm')"><i class="ti ti-eye"></i>Lihat kwitansi BBM</button>
-          <button class="btn btn-primary btn-sm" onclick="downloadReceiptPDF(${d.id}, 'bbm')"><i class="ti ti-download"></i>Unduh PDF BBM</button>
+          <button class="btn btn-ghost btn-sm" onclick="openReceipt(${d.id}, 'bbm')"><i class="ti ti-eye"></i>Lihat kwitansi Fuel Surcharge</button>
+          <button class="btn btn-primary btn-sm" onclick="downloadReceiptPDF(${d.id}, 'bbm')"><i class="ti ti-download"></i>Unduh PDF Fuel Surcharge</button>
         </div>
         <div class="gatepass-panel">
           <p class="gatepass-title"><i class="ti ti-qrcode"></i>Gate pass — QR per kontainer (tunjukkan/cetak untuk petugas gate)</p>
@@ -4975,7 +5254,7 @@ async function exportToExcel() {
   buildStyledSheet(wb, 'EMKL', emklHeaders, emklRows);
 
   const payLabel = { lunas: 'Lunas', belum: 'Belum lunas' };
-  const doHeaders = ['ID DO', 'Nomor DO', 'EMKL', 'ETA', 'Status Pembayaran', 'Biaya Kontainer (Rp)', 'Biaya BBM (Rp)', 'Total Tagihan (Rp)'];
+  const doHeaders = ['ID DO', 'Nomor DO', 'EMKL', 'ETA', 'Status Pembayaran', 'Biaya Kontainer (Rp)', 'Biaya Fuel Surcharge (Rp)', 'Total Tagihan (Rp)'];
   const doRows = dos.map(d => ([
     d.id, d.doNo, d.emklName, d.eta || '', payLabel[d.paymentStatus] || d.paymentStatus,
     d.containerFee, d.bbmFee, d.amount,
@@ -4983,7 +5262,7 @@ async function exportToExcel() {
   buildStyledSheet(wb, 'DO', doHeaders, doRows, [5, 6, 7]);
 
   const gateLabel = { menunggu: 'Menunggu', valid: 'Valid', mismatch: 'Mismatch' };
-  const containerHeaders = ['ID Kontainer', 'Nomor DO', 'Nama Customer', 'No. Kontainer', 'Ukuran', 'Tipe', 'Status Gate', 'Waktu Masuk', 'Kode Gate', 'Biaya Kontainer (Rp)', 'Biaya BBM (Rp)'];
+  const containerHeaders = ['ID Kontainer', 'Nomor DO', 'Nama Customer', 'No. Kontainer', 'Ukuran', 'Tipe', 'Status Gate', 'Waktu Masuk', 'Kode Gate', 'Biaya Kontainer (Rp)', 'Biaya Fuel Surcharge (Rp)'];
   const containerRows = [];
   dos.forEach(d => d.containers.forEach(c => {
     containerRows.push([
