@@ -481,7 +481,7 @@
           </div>
           <div class="field" style="grid-column: 1 / -1;">
             <label for="komoditas">Komoditas</label>
-            <select id="komoditas" onchange="onKomoditasInput()">
+            <select id="komoditas" onchange="onKomoditasInput()" onfocus="if (this.options.length <= 1) populateKomoditasSelect()">
               <option value="">— pilih komoditas —</option>
             </select>
             <div class="c-hint" id="komoditas-hint" style="margin: 6px 2px 0;"></div>
@@ -5446,7 +5446,7 @@ if (currentAdmin) {
   renderAdminAuthState();
 }
 
-populateKomoditasSelect();
+try { populateKomoditasSelect(); } catch (e) { console.error('populateKomoditasSelect failed:', e); }
 
 renderAll();
 renderLog();
