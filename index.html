@@ -4378,6 +4378,35 @@ function vaNumberFor(doId, method) {
   return method === 'qris' ? meta.prefix + '-' + digits : meta.prefix + digits;
 }
 
+// Kalau beberapa kontainer punya tarif yang sama persis (biasanya karena ukurannya sama),
+// gabung jadi satu baris "harga x jumlah" alih-alih mengulang tiap kontainer satu per satu.
+// Kalau tarifnya campur (mis. campuran 20'/40'), tiap grup tarif tetap dapat baris sendiri.
+function payFeeRowsHTML(containers, rateFn, labelFn) {
+  const groups = [];
+  containers.forEach(c => {
+    const rate = rateFn(c);
+    let g = groups.find(g => g.rate === rate);
+    if (!g) { g = { rate, list: [] }; groups.push(g); }
+    g.list.push(c);
+  });
+  return groups.map(g => {
+    if (g.list.length === 1) {
+      const c = g.list[0];
+      return `
+      <div class="pay-summary-row">
+        <span class="c-no">${c.no} <span class="muted">(${labelFn(c)})</span></span>
+        <span>Rp ${g.rate.toLocaleString('id-ID')}</span>
+      </div>`;
+    }
+    const labels = [...new Set(g.list.map(labelFn))];
+    return `
+      <div class="pay-summary-row">
+        <span class="c-no">${g.list.length} kontainer <span class="muted">(${labels.join(' / ')})</span></span>
+        <span>Rp ${g.rate.toLocaleString('id-ID')} × ${g.list.length} = Rp ${(g.rate * g.list.length).toLocaleString('id-ID')}</span>
+      </div>`;
+  }).join('');
+}
+
 function openPaymentModal(id) {
   const d = dos.find(x => x.id === id);
   if (!d || d.paymentStatus === 'lunas') return;
@@ -4387,32 +4416,17 @@ function openPaymentModal(id) {
   const washingCat = WASHING_CATEGORIES.find(c => c.key === d.washingCategory) || null;
   const washingBlock = d.komoditas ? (
     `<div class="pay-group-label">Biaya Washing${washingCat ? ' (' + washingCat.label + ')' : ' (komoditas tidak dikenali)'}</div>` +
-    d.containers.map(c => `
-      <div class="pay-summary-row">
-        <span class="c-no">${c.no} <span class="muted">(${c.size})</span></span>
-        <span>Rp ${washingRateForSize(washingCat, c.size).toLocaleString('id-ID')}</span>
-      </div>
-    `).join('') +
+    payFeeRowsHTML(d.containers, c => washingRateForSize(washingCat, c.size), c => c.size) +
     `<div class="pay-subtotal"><span>Subtotal washing</span><span>Rp ${(d.washingFee || 0).toLocaleString('id-ID')}</span></div>`
   ) : '';
 
   document.getElementById('pay-do-no').textContent = d.doNo;
   document.getElementById('pay-breakdown').innerHTML =
     '<div class="pay-group-label">Biaya Kontainer</div>' +
-    d.containers.map(c => `
-      <div class="pay-summary-row">
-        <span class="c-no">${c.no} <span class="muted">(${c.size} ${c.type})</span></span>
-        <span>Rp ${RATE[c.size].toLocaleString('id-ID')}</span>
-      </div>
-    `).join('') +
+    payFeeRowsHTML(d.containers, c => RATE[c.size], c => c.size + ' ' + c.type) +
     `<div class="pay-subtotal"><span>Subtotal kontainer</span><span>Rp ${d.containerFee.toLocaleString('id-ID')}</span></div>` +
     '<div class="pay-group-label">Biaya Fuel Surcharge (bahan bakar alat/handling)</div>' +
-    d.containers.map(c => `
-      <div class="pay-summary-row">
-        <span class="c-no">${c.no} <span class="muted">(${c.size})</span></span>
-        <span>Rp ${BBM_RATE[c.size].toLocaleString('id-ID')}</span>
-      </div>
-    `).join('') +
+    payFeeRowsHTML(d.containers, c => BBM_RATE[c.size], c => c.size) +
     `<div class="pay-subtotal"><span>Subtotal Fuel Surcharge</span><span>Rp ${d.bbmFee.toLocaleString('id-ID')}</span></div>` +
     washingBlock;
   document.getElementById('pay-total-value').textContent = 'Rp ' + d.amount.toLocaleString('id-ID');
