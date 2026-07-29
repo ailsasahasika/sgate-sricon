@@ -584,6 +584,7 @@
             <option>ONE (Ocean Network Express)</option>
             <option>EVERGREEN LINE</option>
             <option>HAPAG-LLOYD</option>
+            <option>RCL</option>
           </select>
         </div>
         <div class="field">
@@ -640,11 +641,18 @@
         </div>
         <div class="field">
           <label for="din-size">Size</label>
-          <select id="din-size"><option>20'</option><option>40'</option></select>
+          <select id="din-size"><option>20'</option><option>40'</option><option>45'</option></select>
         </div>
         <div class="field">
           <label for="din-type">Type</label>
-          <select id="din-type"><option>Dry</option><option>Reefer</option><option>Open Top</option><option>Flat Rack</option><option>Tank</option></select>
+          <select id="din-type">
+            <option value="GP">GP (General Purpose)</option>
+            <option value="HC">HC (High Cube)</option>
+            <option value="RF">RF (Reefer)</option>
+            <option value="OT">OT (Open Top)</option>
+            <option value="FR">FR (Flat Rack)</option>
+            <option value="TK">TK (Tank)</option>
+          </select>
         </div>
         <div class="field">
           <label for="din-payload">Payload (kg)</label>
@@ -999,17 +1007,53 @@ function handleQrResult(text) {
   setTimeout(closeQrScanner, 900);
 }
 
+// Kode ISO container ditentukan otomatis dari ukurannya (bukan dari data EMKL):
+// 40' & 45' pakai 4150, 20' pakai 2100.
+const ISO_CODE_BY_SIZE = { "20'": '2100', "40'": '4150', "45'": '4150' };
+
 function applyQrToDepotIn(parsed, raw) {
   const contInput = document.getElementById('din-container-no');
   if (parsed && parsed.CONT) {
     contInput.value = parsed.CONT;
     onDepotInContainerNoInput();
+
+    let filledSize = null;
     if (parsed.SIZE) {
       const sizeSel = document.getElementById('din-size');
       const match = [...sizeSel.options].find(o => o.value.replace(/'/g, '') === parsed.SIZE.replace(/'/g, ''));
-      if (match) sizeSel.value = match.value;
+      if (match) { sizeSel.value = match.value; filledSize = match.value; }
     }
-    flash('depotin-flash', 'QR terbaca — nomor kontainer ' + parsed.CONT + ' otomatis terisi dari DO ' + (parsed.DO || '-') + '.', 'ok');
+
+    // ISO code otomatis mengikuti ukuran kontainer
+    if (filledSize && ISO_CODE_BY_SIZE[filledSize]) {
+      document.getElementById('din-iso').value = ISO_CODE_BY_SIZE[filledSize];
+    }
+
+    // Customer Name — dari data yang diisi EMKL saat daftar DO
+    if (parsed.CUST) document.getElementById('din-customer').value = parsed.CUST;
+
+    // Type (GP/HC/RF/OT/FR/TK) — dari data kontainer yang diisi EMKL
+    if (parsed.TYPE) {
+      const typeSel = document.getElementById('din-type');
+      const typeMatch = [...typeSel.options].find(o => o.value === parsed.TYPE);
+      if (typeMatch) typeSel.value = typeMatch.value;
+    }
+
+    // Cleaning — otomatis dari kategori washing yang terdeteksi dari komoditas DO (EMKL)
+    if (parsed.WASH) {
+      const cleanSel = document.getElementById('din-cleaning');
+      const cleanMatch = [...cleanSel.options].find(o => o.value === parsed.WASH);
+      if (cleanMatch) cleanSel.value = cleanMatch.value;
+    }
+
+    // Principal — kalau sudah pernah tercatat sebelumnya (mis. dari entry Depot IN awal)
+    if (parsed.PRINCIPAL) {
+      const principalSel = document.getElementById('din-principal');
+      const principalMatch = [...principalSel.options].find(o => o.value === parsed.PRINCIPAL);
+      if (principalMatch) principalSel.value = principalMatch.value;
+    }
+
+    flash('depotin-flash', 'QR terbaca — data kontainer ' + parsed.CONT + ' otomatis terisi dari DO ' + (parsed.DO || '-') + '.', 'ok');
   } else if (raw) {
     // Bukan format gate pass S-GATE, tetap coba isi sebagai nomor kontainer polos
     contInput.value = raw.trim();
@@ -4187,7 +4231,7 @@ function fillSample() {
 }
 
 const RATE = { "20'": 350000, "40'": 500000, "45'": 550000 };
-const BBM_RATE = { "20'": 150000, "40'": 200000, "45'": 220000 };
+const BBM_RATE = { "20'": 50000, "40'": 50000, "45'": 50000 };
 
 /* ===== Biaya washing — ditentukan otomatis dari komoditas (1 DO = 1 komoditas) =====
    Catatan: tarif Hapag & RCL sama persis di semua kategori, jadi principal tidak
@@ -4197,6 +4241,10 @@ const WASHING_CATEGORIES = [
   { key: 'water', label: 'Water Washing', keywords: ['kedelai', 'limbah kertas', 'creamer'], rate20: 100000, rate40: 200000 },
   { key: 'sweeping', label: 'Sweeping', keywords: ['jagung', 'kardus', 'lem'], rate20: 50000, rate40: 100000 },
 ];
+
+// Kode "Cleaning" di form admin gate (SW/CW/WW/DW) dipetakan dari key kategori washing
+// yang sudah dideteksi otomatis dari komoditas EMKL, supaya bisa ikut dikirim lewat QR.
+const WASHING_CODE_BY_KEY = { chemical: 'CW', water: 'WW', sweeping: 'SW' };
 
 function detectWashingCategory(komoditas) {
   const c = (komoditas || '').toLowerCase().trim();
@@ -4429,9 +4477,16 @@ function todayLong() {
   return days[d.getDay()] + ', ' + d.getDate() + ' ' + months[d.getMonth()] + ' ' + d.getFullYear();
 }
 
-/* ===== QR gate pass per kontainer ===== */
+/* ===== QR gate pass per kontainer =====
+   Payload dilengkapi dengan data yang sudah diketahui sistem saat DO didaftarkan EMKL,
+   supaya saat petugas admin gate scan QR ini di form Depot IN, field Principal, Customer
+   Name, Type, dan Cleaning bisa langsung terisi otomatis (bukan cuma nomor kontainer & size). */
 function containerQRDataURL(d, c) {
-  const payload = 'SGATE|DO:' + d.doNo + '|CONT:' + c.no + '|SIZE:' + c.size + '|CODE:' + c.gateCode;
+  const reg = regLookup(c.no); // principal biasanya sudah tercatat dari entry Depot IN sebelumnya
+  const washCode = d.washingCategory ? (WASHING_CODE_BY_KEY[d.washingCategory] || '') : '';
+  const payload = 'SGATE|DO:' + d.doNo + '|CONT:' + c.no + '|SIZE:' + c.size + '|CODE:' + c.gateCode +
+    '|CUST:' + (c.customerName || '') + '|TYPE:' + (c.type || '') + '|WASH:' + washCode +
+    '|PRINCIPAL:' + (reg && reg.principal ? reg.principal : '');
   const qr = qrcode(0, 'M');
   qr.addData(payload);
   qr.make();
@@ -4953,7 +5008,7 @@ function fillDepotInSample() {
   onDepotInContainerNoInput();
   document.getElementById('din-iso').value = '22G1';
   document.getElementById('din-size').value = "20'";
-  document.getElementById('din-type').value = 'Dry';
+  document.getElementById('din-type').value = 'GP';
   document.getElementById('din-payload').value = 28200;
   document.getElementById('din-tare').value = 2200;
   document.getElementById('din-date-mnfc').value = '2019-05-01';
