@@ -481,7 +481,9 @@
           </div>
           <div class="field" style="grid-column: 1 / -1;">
             <label for="komoditas">Komoditas</label>
-            <input type="text" id="komoditas" placeholder="mis. Jagung, Kedelai, Tembakau..." oninput="onKomoditasInput()">
+            <select id="komoditas" onchange="onKomoditasInput()">
+              <option value="">— pilih komoditas —</option>
+            </select>
             <div class="c-hint" id="komoditas-hint" style="margin: 6px 2px 0;"></div>
           </div>
         </div>
@@ -4288,6 +4290,24 @@ function washingRateForSize(cat, size) {
   return size === "20'" ? cat.rate20 : cat.rate40; // 40' & 45' pakai tarif yang sama
 }
 
+// Isi dropdown Komoditas dari WASHING_CATEGORIES (satu sumber data), dikelompokkan per
+// jenis washing, supaya daftar pilihan selalu sinkron dengan aturan kategori & tarifnya.
+function titleCaseId(s) {
+  return s.replace(/\w\S*/g, w => w.charAt(0).toUpperCase() + w.slice(1));
+}
+function populateKomoditasSelect() {
+  const sel = document.getElementById('komoditas');
+  if (!sel) return;
+  WASHING_CATEGORIES.forEach(cat => {
+    cat.keywords.forEach(k => {
+      const opt = document.createElement('option');
+      opt.value = titleCaseId(k);
+      opt.textContent = titleCaseId(k);
+      sel.appendChild(opt);
+    });
+  });
+}
+
 function onKomoditasInput() {
   const hint = document.getElementById('komoditas-hint');
   const val = document.getElementById('komoditas').value;
@@ -5425,6 +5445,8 @@ if (currentAdmin) {
   // Sesi Admin Gate juga tersimpan — langsung ke dashboard tanpa login ulang.
   renderAdminAuthState();
 }
+
+populateKomoditasSelect();
 
 renderAll();
 renderLog();
